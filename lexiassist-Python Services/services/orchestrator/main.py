@@ -1,0 +1,458 @@
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
+from typing import List, Optional, Dict
+import google.generativeai as genai
+import os
+import uvicorn
+from datetime import datetime, timedelta
+import uuid
+import json
+import asyncio
+
+# Initialize FastAPI
+app = FastAPI(
+    title="LexiAssist AI Orchestrator",
+    description="Manages Gemini AI calls, prompts, and conversation history",
+    version="3.0.0"
+)
+
+# CORS
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ─── Configure Gemini AI (required) ─────────────────────────────────────
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+MODEL_NAME = os.getenv("DEFAULT_MODEL", "gemini-2.5-flash")
+
+if not GEMINI_API_KEY:
+    raise RuntimeError(
+        "GEMINI_API_KEY environment variable is required. "
+        "Get one from https://aistudio.google.com/app/apikey"
+    )
+
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel(MODEL_NAME)
+print(f"✅ Gemini AI configured (model: {MODEL_NAME})")
+
+# ─── Conversation History (in-memory with TTL) ──────────────────────────
+
+conversation_history: Dict[str, List[Dict]] = {}
+conversation_last_active: Dict[str, datetime] = {}
+CONVERSATION_TTL = timedelta(hours=1)
+MAX_CONVERSATIONS = 1000
+
+
+def _evict_stale_conversations():
+    """Remove conversations idle for more than CONVERSATION_TTL."""
+    now = datetime.now()
+    stale = [cid for cid, ts in conversation_last_active.items() if now - ts > CONVERSATION_TTL]
+    for cid in stale:
+        conversation_history.pop(cid, None)
+        conversation_last_active.pop(cid, None)
+    # Hard cap: if still too many, remove oldest
+    if len(conversation_history) > MAX_CONVERSATIONS:
+        sorted_convos = sorted(conversation_last_active.items(), key=lambda x: x[1])
+        for cid, _ in sorted_convos[:len(sorted_convos) - MAX_CONVERSATIONS]:
+            conversation_history.pop(cid, None)
+            conversation_last_active.pop(cid, None)
+
+
+# ─── Pydantic Models ────────────────────────────────────────────────────
+
+class ChatRequest(BaseModel):
+    query: str = Field(..., description="User's question", max_length=10000)
+    user_id: str = Field(..., description="For conversation history")
+    material_id: Optional[str] = Field(None, description="Specific document context")
+    context_chunks: List[str] = Field(default=[], description="Retrieved text chunks from Retrieval Service")
+    conversation_id: Optional[str] = Field(None, description="Continue existing conversation")
+
+class ChatResponse(BaseModel):
+    response: str
+    conversation_id: str
+    tokens_used: int
+    model: str
+    sources: List[str]
+
+class ContextItem(BaseModel):
+    text: str
+    source: str
+    relevance_score: float
+
+
+# ─── Health Check ────────────────────────────────────────────────────────
+
+@app.get("/")
+async def root():
+    return {
+        "status": "healthy",
+        "service": "ai-orchestrator",
+        "port": 5005,
+        "version": "3.0.0",
+        "ai_model": MODEL_NAME,
+    }
+
+@app.get("/health")
+async def health():
+    return {
+        "status": "ok",
+        "model": MODEL_NAME,
+        "conversations_active": len(conversation_history)
+    }
+
+
+# ─── Prompt Builder ─────────────────────────────────────────────────────
+
+def build_prompt(query: str, context_chunks: List[str], chat_history: List[Dict]) -> str:
+    """Build a smart prompt for Gemini with context and history."""
+    has_context = bool(context_chunks)
+    
+    if has_context:
+        context_text = "\n\n".join([
+            f"[Document {i+1}]\n{chunk}"
+            for i, chunk in enumerate(context_chunks[:5])
+        ])
+        context_section = f"""DOCUMENT CONTEXT:
+{context_text}
+
+IMPORTANT: Use the above document context to answer the question. If the answer is not in the documents, say "I don't have enough information in the provided documents."""
+    else:
+        context_section = """NO DOCUMENTS UPLOADED:
+Answer this question using your general knowledge. The user has not uploaded any study materials, so provide a helpful, accurate answer based on what you know."""
+
+    history_text = ""
+    if chat_history:
+        history_text = "\n\nPrevious conversation:\n"
+        for msg in chat_history[-3:]:
+            role = "User" if msg["role"] == "user" else "Assistant"
+            history_text += f"{role}: {msg['content']}\n"
+
+    prompt = f"""You are LexiAssist, a helpful AI study assistant for students.
+
+{context_section}
+{history_text}
+
+USER QUESTION: {query}
+
+INSTRUCTIONS:
+- Be concise but thorough
+- Use bullet points for lists
+- For document-based questions: cite which document [Document X]
+- For general knowledge: provide accurate, helpful information
+
+Your response:"""
+
+    return prompt
+
+
+async def call_gemini(prompt: str) -> tuple:
+    """Call Gemini and return (response_text, tokens_used)."""
+    response = model.generate_content(prompt)
+    tokens_used = 0
+    if hasattr(response, 'usage_metadata') and response.usage_metadata:
+        tokens_used = getattr(response.usage_metadata, 'total_token_count', 0)
+    return response.text, tokens_used
+
+
+# ─── Chat Endpoint ──────────────────────────────────────────────────────
+
+@app.post("/api/v1/ai/chat", response_model=ChatResponse)
+async def chat(request: ChatRequest):
+    """Main chat endpoint — receives query + context, returns AI response."""
+    conversation_id = request.conversation_id or str(uuid.uuid4())
+
+    # Evict stale conversations
+    _evict_stale_conversations()
+
+    if conversation_id not in conversation_history:
+        conversation_history[conversation_id] = []
+
+    chat_history = conversation_history[conversation_id]
+    prompt = build_prompt(request.query, request.context_chunks, chat_history)
+
+    print(f"\n🤖 Processing chat for user {request.user_id}")
+    print(f"   Query: {request.query[:50]}...")
+    print(f"   Context chunks: {len(request.context_chunks)}")
+    print(f"   History length: {len(chat_history)}")
+
+    try:
+        ai_response, tokens_used = await call_gemini(prompt)
+
+        # Update conversation history
+        chat_history.append({
+            "role": "user",
+            "content": request.query,
+            "timestamp": datetime.now().isoformat()
+        })
+        chat_history.append({
+            "role": "assistant",
+            "content": ai_response,
+            "timestamp": datetime.now().isoformat()
+        })
+
+        # Keep only last 10 messages
+        conversation_history[conversation_id] = chat_history[-10:]
+        conversation_last_active[conversation_id] = datetime.now()
+
+        print(f"   ✅ Response generated ({len(ai_response)} chars, {tokens_used} tokens)")
+
+        return ChatResponse(
+            response=ai_response,
+            conversation_id=conversation_id,
+            tokens_used=tokens_used,
+            model=MODEL_NAME,
+            sources=[f"chunk_{i}" for i in range(len(request.context_chunks))]
+        )
+
+    except Exception as e:
+        print(f"❌ Chat error: {e}")
+        raise HTTPException(status_code=500, detail=f"AI generation failed: {str(e)}")
+
+
+@app.get("/api/v1/ai/conversation/{conversation_id}")
+async def get_conversation_history(conversation_id: str):
+    """Retrieve conversation history."""
+    if conversation_id not in conversation_history:
+        return {"conversation_id": conversation_id, "messages": []}
+    return {
+        "conversation_id": conversation_id,
+        "messages": conversation_history[conversation_id]
+    }
+
+@app.delete("/api/v1/ai/conversation/{conversation_id}")
+async def clear_conversation(conversation_id: str):
+    """Clear conversation history."""
+    if conversation_id in conversation_history:
+        del conversation_history[conversation_id]
+        conversation_last_active.pop(conversation_id, None)
+        return {"message": "Conversation cleared"}
+    return {"message": "Conversation not found"}
+
+
+# ─── Streaming Chat Endpoint ──────────────────────────────────────────────
+
+@app.post("/api/v1/ai/chat/stream")
+async def chat_stream(request: ChatRequest):
+    """Stream chat responses for real-time display."""
+    conversation_id = request.conversation_id or str(uuid.uuid4())
+    
+    # Evict stale conversations
+    _evict_stale_conversations()
+    
+    if conversation_id not in conversation_history:
+        conversation_history[conversation_id] = []
+    
+    chat_history = conversation_history[conversation_id]
+    prompt = build_prompt(request.query, request.context_chunks, chat_history)
+    
+    print(f"\n🤖 Processing streaming chat for user {request.user_id}")
+    print(f"   Query: {request.query[:50]}...")
+    print(f"   Context chunks: {len(request.context_chunks)}")
+    
+    async def generate_stream():
+        try:
+            # Start with conversation_id event
+            yield f"data: {json.dumps({'conversation_id': conversation_id})}\n\n"
+            
+            # Call Gemini with streaming
+            response = model.generate_content(prompt, stream=True)
+            
+            full_response = ""
+            tokens_used = 0
+            
+            for chunk in response:
+                if chunk.text:
+                    full_response += chunk.text
+                    # Send each chunk as SSE
+                    yield f"data: {json.dumps({'token': chunk.text})}\n\n"
+                    # Small delay to prevent overwhelming the client
+                    await asyncio.sleep(0.01)
+            
+            # Get token count if available
+            if hasattr(response, 'usage_metadata') and response.usage_metadata:
+                tokens_used = getattr(response.usage_metadata, 'total_token_count', 0)
+            
+            # Update conversation history
+            chat_history.append({
+                "role": "user",
+                "content": request.query,
+                "timestamp": datetime.now().isoformat()
+            })
+            chat_history.append({
+                "role": "assistant",
+                "content": full_response,
+                "timestamp": datetime.now().isoformat()
+            })
+            
+            # Keep only last 10 messages
+            conversation_history[conversation_id] = chat_history[-10:]
+            conversation_last_active[conversation_id] = datetime.now()
+            
+            # Send completion event
+            yield f"data: {json.dumps({
+                'complete': True,
+                'conversation_id': conversation_id,
+                'tokens_used': tokens_used,
+                'model': MODEL_NAME,
+                'sources': [f"chunk_{i}" for i in range(len(request.context_chunks))]
+            })}\n\n"
+            
+            # End of stream
+            yield "data: [DONE]\n\n"
+            
+            print(f"   ✅ Stream complete ({len(full_response)} chars)")
+            
+        except Exception as e:
+            print(f"❌ Streaming chat error: {e}")
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+    
+    return StreamingResponse(
+        generate_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        }
+    )
+
+
+# ─── Generate Endpoints ─────────────────────────────────────────────────
+
+@app.post("/api/v1/ai/generate/quiz")
+async def generate_quiz(request: ChatRequest):
+    """Generate a quiz from content using RAG context chunks."""
+    try:
+        context_section = ""
+        if request.context_chunks:
+            context_section = "Based on these document excerpts:\n\n" + "\n\n".join(
+                f"[Section {i+1}] {chunk}" for i, chunk in enumerate(request.context_chunks[:5])
+            ) + "\n\n"
+
+        prompt = f"""{context_section}Generate a 5-question multiple choice quiz about the following topic.
+
+Topic/Content: {request.query}
+
+For each question:
+1. Write a clear question
+2. Provide 4 options labeled A, B, C, D
+3. Mark the correct answer
+4. Add a brief explanation
+
+Format as valid JSON with this structure:
+{{
+    "questions": [
+        {{
+            "id": "q1",
+            "question": "...",
+            "options": {{"A": "...", "B": "...", "C": "...", "D": "..."}},
+            "correct_answer": "B",
+            "explanation": "..."
+        }}
+    ]
+}}"""
+
+        ai_response, tokens = await call_gemini(prompt)
+
+        return {
+            "quiz": ai_response,
+            "type": "quiz",
+            "model": MODEL_NAME,
+            "tokens_used": tokens,
+            "context_chunks_used": len(request.context_chunks)
+        }
+
+    except Exception as e:
+        print(f"❌ Quiz generation error: {e}")
+        raise HTTPException(status_code=500, detail=f"Quiz generation failed: {str(e)}")
+
+
+@app.post("/api/v1/ai/generate/summary")
+async def generate_summary(request: ChatRequest):
+    """Generate a summary of content using RAG context chunks."""
+    try:
+        context_section = ""
+        if request.context_chunks:
+            context_section = "Document content to summarize:\n\n" + "\n\n".join(
+                f"[Section {i+1}] {chunk}" for i, chunk in enumerate(request.context_chunks[:5])
+            ) + "\n\n"
+
+        prompt = f"""{context_section}Provide a concise but comprehensive summary of the following content.
+
+Content/Topic: {request.query}
+
+Include:
+- Key concepts and main ideas
+- Important details and relationships
+- Any conclusions or implications
+
+Write in clear, student-friendly language with bullet points for key takeaways."""
+
+        ai_response, tokens = await call_gemini(prompt)
+
+        return {
+            "summary": ai_response,
+            "type": "summary",
+            "model": MODEL_NAME,
+            "tokens_used": tokens,
+            "context_chunks_used": len(request.context_chunks)
+        }
+
+    except Exception as e:
+        print(f"❌ Summary generation error: {e}")
+        raise HTTPException(status_code=500, detail=f"Summary generation failed: {str(e)}")
+
+
+@app.post("/api/v1/ai/generate/flashcards")
+async def generate_flashcards(request: ChatRequest):
+    """Generate flashcards from content using RAG context chunks."""
+    try:
+        context_section = ""
+        if request.context_chunks:
+            context_section = "Source material:\n\n" + "\n\n".join(
+                f"[Section {i+1}] {chunk}" for i, chunk in enumerate(request.context_chunks[:5])
+            ) + "\n\n"
+
+        prompt = f"""{context_section}Create 5 flashcards (question and answer format) from the following content.
+
+Content/Topic: {request.query}
+
+For each flashcard:
+- Front: A clear, specific question
+- Back: A concise but complete answer
+
+Format as valid JSON:
+{{
+    "flashcards": [
+        {{
+            "id": "f1",
+            "front": "What is...?",
+            "back": "It is..."
+        }}
+    ]
+}}"""
+
+        ai_response, tokens = await call_gemini(prompt)
+
+        return {
+            "flashcards": ai_response,
+            "type": "flashcards",
+            "model": MODEL_NAME,
+            "tokens_used": tokens,
+            "context_chunks_used": len(request.context_chunks)
+        }
+
+    except Exception as e:
+        print(f"❌ Flashcards generation error: {e}")
+        raise HTTPException(status_code=500, detail=f"Flashcards generation failed: {str(e)}")
+
+
+if __name__ == "__main__":
+    uvicorn.run("main:app", host="0.0.0.0", port=5005, reload=True)

@@ -1,0 +1,443 @@
+services:
+  # PostgreSQL Database
+  postgres:
+    image: pgvector/pgvector:pg15
+    container_name: lexiassist-postgres
+    environment:
+      POSTGRES_USER: lexiassist
+      POSTGRES_PASSWORD: lexiassist_secret
+      POSTGRES_DB: lexiassist
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lexiassist"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - lexiassist-network
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: lexiassist-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - lexiassist-network
+
+  # User Service
+  user-service:
+    build:
+      context: ..
+      dockerfile: services/user/Dockerfile
+    container_name: lexiassist-user-service
+    environment:
+      - SERVICE_NAME=user-service
+      - ENVIRONMENT=development
+      - LOG_LEVEL=info
+      - PORT=8081
+      - DATABASE_URL=postgresql://lexiassist:lexiassist_secret@postgres:5432/lexiassist?sslmode=disable
+      - REDIS_URL=redis:6379
+      - PRIVATE_KEY_ENCRYPTION_KEY=${PRIVATE_KEY_ENCRYPTION_KEY:-your-secure-master-key-min-32-chars-long}
+      - BCRYPT_COST=12
+      - ACCESS_TOKEN_TTL=15m
+      - REFRESH_TOKEN_TTL=720h
+    ports:
+      - "8081:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - lexiassist-network
+    restart: unless-stopped
+
+  # Content Service
+  content-service:
+    build:
+      context: ..
+      dockerfile: services/content/Dockerfile
+    image: lexiassist/content-service:latest
+    container_name: lexiassist-content-service
+    environment:
+      - SERVICE_NAME=content-service
+      - ENVIRONMENT=development
+      - LOG_LEVEL=info
+      - PORT=8082
+      - DATABASE_URL=postgresql://lexiassist:lexiassist_secret@postgres:5432/lexiassist?sslmode=disable
+      - REDIS_URL=redis:6379
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin_secret
+      - MINIO_BUCKET=lexiassist-materials
+      - INGESTION_SERVICE_URL=http://ingestion-service:5002
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY:-dev-internal-key}
+    ports:
+      - "8082:8082"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8082/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - lexiassist-network
+    restart: unless-stopped
+
+  # Analytics Service
+  analytics-service:
+    build:
+      context: ..
+      dockerfile: services/analytics/Dockerfile
+    image: lexiassist/analytics-service:latest
+    container_name: lexiassist-analytics-service
+    environment:
+      - SERVICE_NAME=analytics-service
+      - ENVIRONMENT=development
+      - LOG_LEVEL=info
+      - PORT=8083
+      - DATABASE_URL=postgresql://lexiassist:lexiassist_secret@postgres:5432/lexiassist?sslmode=disable
+      - REDIS_URL=redis:6379
+    ports:
+      - "8083:8083"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8083/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - lexiassist-network
+    restart: unless-stopped
+
+  # Notification Service
+  notification-service:
+    build:
+      context: ..
+      dockerfile: services/notification-service/Dockerfile
+    image: lexiassist/notification-service:latest
+    container_name: lexiassist-notification-service
+    environment:
+      - SERVICE_NAME=notification-service
+      - ENVIRONMENT=development
+      - LOG_LEVEL=info
+      - PORT=8084
+      - DATABASE_URL=postgresql://lexiassist:lexiassist_secret@postgres:5432/lexiassist?sslmode=disable
+      - REDIS_URL=redis:6379
+      # SMTP Configuration (optional - for email notifications)
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USERNAME=${SMTP_USERNAME:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM=${SMTP_FROM:-notifications@lexiassist.com}
+      # Firebase Configuration (optional - for push notifications)
+      - FIREBASE_SERVICE_ACCOUNT_PATH=${FIREBASE_SERVICE_ACCOUNT_PATH:-}
+    ports:
+      - "8084:8084"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8084/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - lexiassist-network
+    restart: unless-stopped
+
+  # Sync Service
+  sync-service:
+    build:
+      context: ..
+      dockerfile: services/sync-service/Dockerfile
+    container_name: lexiassist-sync-service
+    environment:
+      - SERVICE_NAME=sync-service
+      - ENVIRONMENT=development
+      - LOG_LEVEL=info
+      - PORT=8085
+      - DATABASE_URL=postgresql://lexiassist:lexiassist_secret@postgres:5432/lexiassist?sslmode=disable
+      - REDIS_URL=redis:6379
+    ports:
+      - "8085:8085"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8085/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - lexiassist-network
+    restart: unless-stopped
+
+  # Gateway Service
+  gateway:
+    build:
+      context: ..
+      dockerfile: services/gateway/Dockerfile
+    image: lexiassist/gateway:latest
+    container_name: lexiassist-gateway
+    environment:
+      - SERVICE_NAME=gateway
+      - ENVIRONMENT=development
+      - LOG_LEVEL=info
+      - PORT=8080
+      - ALLOWED_ORIGINS=http://localhost:3000
+      - USER_SERVICE_URL=http://user-service:8081
+      - CONTENT_SERVICE_URL=http://content-service:8082
+      - ANALYTICS_SERVICE_URL=http://analytics-service:8083
+      - NOTIFICATION_SERVICE_URL=http://notification-service:8084
+      - SYNC_SERVICE_URL=http://sync-service:8085
+      # Python AI Service URLs
+      - AI_ORCHESTRATOR_URL=http://ai-orchestrator:5005
+      - RETRIEVAL_SERVICE_URL=http://retrieval-service:5003
+      - AUDIO_SERVICE_URL=http://audio-service:5004
+      - INGESTION_SERVICE_URL=http://ingestion-service:5002
+      - REDIS_URL=redis:6379
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY:-dev-internal-key}
+      - JWT_SECRET=${JWT_SECRET:-your-jwt-secret-key-here}
+      # AI Monolith Service (FastAPI)
+      - AI_SERVICE_URL=http://ai-service:8000
+      - AI_SERVICE_TIMEOUT=${AI_SERVICE_TIMEOUT:-120s}
+    ports:
+      - "8080:8080"
+    depends_on:
+      - user-service
+      - content-service
+      - analytics-service
+      - notification-service
+      - sync-service
+      - ai-orchestrator
+      - retrieval-service
+      - audio-service
+      - ingestion-service
+      - ai-service
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - lexiassist-network
+    restart: unless-stopped
+
+  # MinIO Object Storage (for Content Service)
+  minio:
+    image: minio/minio:latest
+    container_name: lexiassist-minio
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin_secret
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      - lexiassist-network
+
+  # AI Monolith Service (FastAPI — Writing, Reading, Study)
+  ai-service:
+    build:
+      context: ../lexiassist-ai-main
+      dockerfile: Dockerfile
+    image: lexiassist/ai-service:latest
+    container_name: lexiassist-ai-service
+    environment:
+      - DATABASE_URL=postgresql://lexiassist:lexiassist_secret@postgres:5432/lexiassist
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - WEAVIATE_URL=${WEAVIATE_URL:-}
+      - WEAVIATE_API_KEY=${WEAVIATE_API_KEY:-}
+      - COHERE_API_KEY=${COHERE_API_KEY:-}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/docs')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - lexiassist-network
+    restart: unless-stopped
+
+  # Python AI Services
+  
+  # AI Orchestrator (Port 5005)
+  ai-orchestrator:
+    build:
+      context: ../lexiassist-Python Services
+      dockerfile: services/orchestrator/Dockerfile
+    image: lexiassist/ai-orchestrator:latest
+    container_name: lexiassist-ai-orchestrator
+    environment:
+      - PORT=5005
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - ANALYTICS_WEBHOOK_URL=http://analytics-service:8083/api/v1/internal/ai-usage
+      - DEFAULT_MODEL=gemini-2.0-flash
+      - ALLOWED_ORIGINS=http://localhost:3000
+      - LOG_LEVEL=info
+    ports:
+      - "5005:5005"
+    networks:
+      - lexiassist-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5005/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Retrieval Service (Port 5003)
+  retrieval-service:
+    build:
+      context: ../lexiassist-Python Services
+      dockerfile: services/retrieval/Dockerfile
+    image: lexiassist/retrieval-service:latest
+    container_name: lexiassist-retrieval-service
+    environment:
+      - PORT=5003
+      - DATABASE_URL=postgresql://lexiassist:lexiassist_secret@postgres:5432/lexiassist
+      - LOG_LEVEL=info
+    ports:
+      - "5003:5003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - lexiassist-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5003/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Audio Service (Port 5004)
+  audio-service:
+    build:
+      context: ../lexiassist-Python Services
+      dockerfile: services/audio/Dockerfile
+    image: lexiassist/audio-service:latest
+    container_name: lexiassist-audio-service
+    environment:
+      - PORT=5004
+      - LOG_LEVEL=info
+    ports:
+      - "5004:5004"
+    networks:
+      - lexiassist-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5004/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Ingestion Service (Port 5002)
+  ingestion-service:
+    build:
+      context: ../lexiassist-Python Services
+      dockerfile: services/ingestion/Dockerfile
+    image: lexiassist/ingestion-service:latest
+    container_name: lexiassist-ingestion-service
+    environment:
+      - PORT=5002
+      - DATABASE_URL=postgresql://lexiassist:lexiassist_secret@postgres:5432/lexiassist
+      - CONTENT_WEBHOOK_URL=http://content-service:8082/api/v1/internal/materials/processing-status
+      - EMBEDDING_MODEL=all-MiniLM-L6-v2
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY:-dev-internal-key}
+      - LOG_LEVEL=info
+    ports:
+      - "5002:5002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - lexiassist-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5002/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Evaluation Service (Port 5006)
+  evaluation-service:
+    build:
+      context: ../lexiassist-Python Services
+      dockerfile: services/evaluation/Dockerfile
+    image: lexiassist/evaluation-service:latest
+    container_name: lexiassist-evaluation-service
+    environment:
+      - PORT=5006
+      - DATABASE_URL=postgresql://lexiassist:lexiassist_secret@postgres:5432/lexiassist
+      - ALLOWED_ORIGINS=http://localhost:3000
+      - LOG_LEVEL=info
+    ports:
+      - "5006:5006"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - lexiassist-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5006/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+
+networks:
+  lexiassist-network:
+    driver: bridge

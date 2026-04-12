@@ -1,0 +1,50 @@
+# ── Environment & Secrets ──────────────────────────────────────────────────
+.env
+.env.*
+infra/.env
+*.pem
+*.key
+
+# ── Go ─────────────────────────────────────────────────────────────────────
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+services/gateway/gateway.exe
+
+# ── Python ─────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+*.egg-info/
+
+# ── Docker ─────────────────────────────────────────────────────────────────
+docker-compose.override.yml
+
+# ── IDE / Editor ───────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.kiro/
+
+# ── OS ─────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ── Data / Logs ────────────────────────────────────────────────────────────
+*.log
+*.pdf
+lexiassist-ai-main/mm1.pdf
+lexiassist-ai-main/mm1_ocr.pdf
+lexiassist-ai-main/reading_assistant/temp_audio/
+lexiassist-Python Services/services/ingestion/*.json
+lexiassist-Python Services/services/ingestion/extracted_text.txt
+login.json
