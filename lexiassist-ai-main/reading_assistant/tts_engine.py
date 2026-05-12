@@ -1,26 +1,18 @@
+import io
 import mimetypes
 import os
 import struct
-import time
 from typing import Literal, Optional, Dict, Any
-from google import genai
-from google.genai import types
-from google.genai.errors import ServerError, ClientError
-import tempfile
+from gtts import gTTS
 from pathlib import Path
 
 
 class TTSGenerator:
-    """Handles text-to-speech generation for the reading assistant."""
+    """Handles text-to-speech generation for the reading assistant using gTTS."""
     
     def __init__(self, api_key: Optional[str] = None):
-        """Initialize the TTS generator with Gemini API."""
-        self.client = genai.Client(
-            api_key=api_key or os.environ.get("GEMINI_API_KEY")
-        )
-        self.model = "gemini-2.5-flash-preview-tts"
-        
-        # Available voices for customization
+        """Initialize the TTS generator."""
+        # gTTS does not require an API key for basic usage
         self.available_voices = {
             "Zephyr": "Warm, friendly, and approachable",
             "Puck": "Energetic, playful, slightly whimsical",
@@ -38,109 +30,24 @@ class TTSGenerator:
         temperature: float = 1.0
     ) -> Dict[str, Any]:
         """
-        Generate audio from text using Gemini TTS.
-        
-        Args:
-            text: The text to convert to speech
-            voice: Voice name (Zephyr, Puck, Athena, Aria, Nova)
-            speaker_label: Label for the speaker (e.g., "Narrator", "Assistant")
-            output_file: Path to save audio file (if None, uses temp file)
-            temperature: Controls randomness (0.0-1.0)
-        
-        Returns:
-            Dictionary with audio data and metadata
+        Generate audio from text using gTTS (in-memory, no disk I/O).
         """
         
-        # Validate voice selection
+        # Validate voice selection (kept for API compatibility)
         if voice not in self.available_voices:
             raise ValueError(f"Voice '{voice}' not found. Available: {list(self.available_voices.keys())}")
         
-        # Prepare content for TTS
-        contents = [
-            types.Content(
-                role="user",
-                parts=[
-                    types.Part.from_text(text=text),
-                ],
-            ),
-        ]
-        
-        # Configure speech generation
-        generate_content_config = types.GenerateContentConfig(
-            temperature=temperature,
-            response_modalities=["audio"],
-            speech_config=types.SpeechConfig(
-                voice_config=types.VoiceConfig(
-                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                                    voice_name=voice
-                                )
-                            ),
-                        ),
-            )
-        
-        # Generate audio stream with retry logic
-        audio_data = None
-        audio_mime_type = None
-        max_retries = 3
-        last_error = None
-        
-        for attempt in range(max_retries):
-            try:
-                for chunk in self.client.models.generate_content_stream(
-                    model=self.model,
-                    contents=contents,
-                    config=generate_content_config,
-                ):
-                    if chunk.parts is None:
-                        continue
-                        
-                    if chunk.parts[0].inline_data and chunk.parts[0].inline_data.data:
-                        audio_data = chunk.parts[0].inline_data.data
-                        audio_mime_type = chunk.parts[0].inline_data.mime_type
-                        break  # Only process first audio chunk
-                    else:
-                        # Handle any text responses (if any)
-                        print(chunk.text)
-                
-                if audio_data is not None:
-                    break  # Success, exit retry loop
-                    
-            except ServerError as e:
-                last_error = e
-                print(f"⚠️ Gemini API server error (attempt {attempt + 1}/{max_retries}): {e}")
-                if attempt < max_retries - 1:
-                    wait_time = (attempt + 1) * 2  # Exponential backoff: 2s, 4s
-                    print(f"   Retrying in {wait_time}s...")
-                    time.sleep(wait_time)
-                continue
-            except ClientError as e:
-                last_error = e
-                print(f"⚠️ Gemini API client error (attempt {attempt + 1}/{max_retries}): {e}")
-                if attempt < max_retries - 1:
-                    wait_time = (attempt + 1) * 2
-                    print(f"   Retrying in {wait_time}s...")
-                    time.sleep(wait_time)
-                continue
-        
-        if audio_data is None:
-            if last_error:
-                raise RuntimeError(f"No audio data generated after {max_retries} attempts. Last error: {last_error}")
-            raise RuntimeError("No audio data generated")
-        
-        # Determine output file path
-        if output_file is None:
-            output_file = tempfile.NamedTemporaryFile(
-                suffix=".wav", 
-                delete=False
-            ).name
-        
-        # Convert and save audio
-        output_path = self._save_audio_file(audio_data, audio_mime_type, output_file)
+        # gTTS generates MP3 audio directly into an in-memory buffer
+        tts = gTTS(text=text, lang="en", slow=False)
+        buf = io.BytesIO()
+        tts.write_to_fp(buf)
+        buf.seek(0)
+        audio_data = buf.read()
         
         return {
-            "audio_path": output_path,
+            "audio_path": "memory://generated.mp3",
             "audio_data": audio_data,
-            "mime_type": audio_mime_type,
+            "mime_type": "audio/mpeg",
             "voice": voice,
             "speaker": speaker_label,
             "text_length": len(text)
@@ -154,87 +61,25 @@ class TTSGenerator:
         temperature: float = 1.0
     ) -> Dict[str, Any]:
         """
-        Generate multi-speaker audio with different voices for different speakers.
-        
-        Args:
-            text_segments: List of text segments with speaker labels
-            voice_assignments: List of speaker voice configurations
-            output_file: Path to save audio file
-            temperature: Controls randomness
-        
-        Returns:
-            Dictionary with audio data and metadata
+        Generate multi-speaker audio using gTTS (in-memory, no disk I/O).
+        gTTS does not support per-speaker voices, so we flatten to a single narration.
         """
         
-        # Build multi-speaker content
-        content_parts = []
-        for segment in text_segments:
-            content_parts.append(
-                types.Part.from_text(
-                    text=f"{segment['speaker']}: {segment['text']}"
-                )
-            )
-        
-        contents = [
-            types.Content(
-                role="user",
-                parts=content_parts,
-            ),
-        ]
-        
-        # Configure multi-speaker voices
-        speaker_configs = []
-        for assignment in voice_assignments:
-            speaker_configs.append(
-                types.SpeakerVoiceConfig(
-                    speaker=assignment["speaker"],
-                    voice_config=types.VoiceConfig(
-                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                            voice_name=assignment["voice"]
-                        )
-                    ),
-                )
-            )
-        
-        generate_content_config = types.GenerateContentConfig(
-            temperature=temperature,
-            response_modalities=["audio"],
-            speech_config=types.SpeechConfig(
-                multi_speaker_voice_config=types.MultiSpeakerVoiceConfig(
-                    speaker_voice_configs=speaker_configs
-                ),
-            ),
+        # Flatten segments into one text block
+        full_text = "\n".join(
+            f"{segment['speaker']}: {segment['text']}" for segment in text_segments
         )
         
-        # Generate audio
-        audio_data = None
-        audio_mime_type = None
-        
-        for chunk in self.client.models.generate_content_stream(
-            model=self.model,
-            contents=contents,
-            config=generate_content_config,
-        ):
-            if chunk.parts is None:
-                continue
-                
-            if chunk.parts[0].inline_data and chunk.parts[0].inline_data.data:
-                audio_data = chunk.parts[0].inline_data.data
-                audio_mime_type = chunk.parts[0].inline_data.mime_type
-                break
-        
-        if audio_data is None:
-            raise RuntimeError("No audio data generated")
-        
-        if output_file is None:
-            output_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False).name
-        
-        output_path = self._save_audio_file(audio_data, audio_mime_type, output_file)
+        tts = gTTS(text=full_text, lang="en", slow=False)
+        buf = io.BytesIO()
+        tts.write_to_fp(buf)
+        buf.seek(0)
+        audio_data = buf.read()
         
         return {
-            "audio_path": output_path,
+            "audio_path": "memory://generated.mp3",
             "audio_data": audio_data,
-            "mime_type": audio_mime_type,
+            "mime_type": "audio/mpeg",
             "voice_assignments": voice_assignments,
             "text_segments": text_segments
         }

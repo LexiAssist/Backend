@@ -1,5 +1,4 @@
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, HTTPException, Depends, Header, Request
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
@@ -25,21 +24,21 @@ from database import (
     get_feedback_stats,
 )
 
+
+def verify_internal_key(request: Request, x_internal_key: str = Header(None)):
+    if request.url.path in ("/", "/health"):
+        return
+    expected = os.getenv("INTERNAL_API_KEY", "dev-internal-key-change-in-production")
+    if not x_internal_key or x_internal_key != expected:
+        raise HTTPException(status_code=403, detail="Invalid or missing internal key")
+
+
 # Initialize FastAPI
 app = FastAPI(
     title="LexiAssist Evaluation Service",
     description="Analytics, quiz grading, and feedback collection",
-    version="2.0.0"
-)
-
-# CORS
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    version="2.0.0",
+    dependencies=[Depends(verify_internal_key)],
 )
 
 
@@ -65,6 +64,24 @@ class GradeResponse(BaseModel):
     correct_answers: Dict[str, Any]
     feedback: Dict[str, str]
 
+# ─── Cost Tracking ────────────────────────────────────────────────────
+# Accurate Gemini 2.5 Flash pricing (matches orchestrator MODEL_PRICING)
+MODEL_PRICING = {
+    "gemini-2.5-flash-lite": {"input": 0.00010, "output": 0.00040},
+    "gemini-2.5-flash":      {"input": 0.00030, "output": 0.00250},
+    "gemini-2.5-pro":        {"input": 0.00125, "output": 0.01000},
+}
+DEFAULT_MODEL = "gemini-2.5-flash"
+
+
+def _calculate_cost(model_name: str, input_tokens: int, output_tokens: int) -> float:
+    """Calculate cost in USD using accurate per-model pricing."""
+    pricing = MODEL_PRICING.get(model_name, MODEL_PRICING[DEFAULT_MODEL])
+    input_cost = (input_tokens / 1000) * pricing["input"]
+    output_cost = (output_tokens / 1000) * pricing["output"]
+    return input_cost + output_cost
+
+
 class AIInteractionLog(BaseModel):
     user_id: str
     service_type: str = Field(..., description="e.g., 'chat', 'summary', 'quiz_gen'")
@@ -72,7 +89,7 @@ class AIInteractionLog(BaseModel):
     output_tokens: int
     latency_ms: int
     success: bool
-    model_name: Optional[str] = "gemini-2.0-flash"
+    model_name: Optional[str] = DEFAULT_MODEL
 
 class FeedbackSubmission(BaseModel):
     interaction_id: Optional[str] = None
@@ -103,10 +120,9 @@ async def root():
 
 @app.get("/health")
 async def health():
-    from database import DB_CONNECTED
     return {
         "status": "ok",
-        "storage": "postgresql" if DB_CONNECTED else "unavailable",
+        "storage": "json-file (PostgreSQL ready)",
         "services": ["grading", "analytics", "feedback"]
     }
 
@@ -246,9 +262,8 @@ async def log_ai_interaction(log: AIInteractionLog):
     Logs AI usage metrics (tokens, latency, costs).
     Called by Orchestrator Service after each Gemini API call.
     """
+    estimated_cost = _calculate_cost(log.model_name, log.input_tokens, log.output_tokens)
     total_tokens = log.input_tokens + log.output_tokens
-    cost_per_1k_tokens = 0.0005
-    estimated_cost = (total_tokens / 1000) * cost_per_1k_tokens
 
     interaction_data = {
         "user_id": log.user_id,

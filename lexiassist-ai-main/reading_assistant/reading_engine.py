@@ -40,59 +40,51 @@ _weaviate_client = None
 
 
 def _get_weaviate_client():
-    """Lazy singleton — connects to Weaviate on first call.
-    Returns None if Weaviate is not configured or fails to connect."""
+    """Lazy singleton — connects to Weaviate on first call."""
     global _weaviate_client
     if _weaviate_client is not None:
         return _weaviate_client
 
     weaviate_url = os.getenv("WEAVIATE_URL")
     weaviate_api_key = os.getenv("WEAVIATE_API_KEY")
-    
-    # If Weaviate is not configured, return None (optional mode)
     if not weaviate_url:
-        logger.warning("WEAVIATE_URL not set — operating without vector storage")
-        return None
+        raise RuntimeError("WEAVIATE_URL env var is not set")
 
-    try:
-        headers = {}
-        cohere_key = os.getenv("COHERE_API_KEY")
-        google_key = os.getenv("GOOGLE_API_KEY")
-        if cohere_key:
-            headers["X-Cohere-Api-Key"] = cohere_key
-        if google_key:
-            headers["X-Goog-Studio-Api-Key"] = google_key
+    headers = {}
+    cohere_key = os.getenv("COHERE_API_KEY")
+    google_key = os.getenv("GOOGLE_API_KEY")
+    if cohere_key:
+        headers["X-Cohere-Api-Key"] = cohere_key
+    if google_key:
+        headers["X-Goog-Studio-Api-Key"] = google_key
 
-        if weaviate_api_key:
-            _weaviate_client = weaviate.connect_to_weaviate_cloud(
-                cluster_url=weaviate_url,
-                auth_credentials=weaviate.auth.AuthApiKey(weaviate_api_key),
-                headers=headers,
-            )
-        else:
-            _weaviate_client = weaviate.connect_to_weaviate_cloud(
-                cluster_url=weaviate_url,
-                headers=headers,
-            )
+    if weaviate_api_key:
+        _weaviate_client = weaviate.connect_to_weaviate_cloud(
+            cluster_url=weaviate_url,
+            auth_credentials=weaviate.auth.AuthApiKey(weaviate_api_key),
+            headers=headers,
+        )
+    else:
+        _weaviate_client = weaviate.connect_to_weaviate_cloud(
+            cluster_url=weaviate_url,
+            headers=headers,
+        )
 
-        if not _weaviate_client.collections.exists(COLLECTION_NAME):
-            _weaviate_client.collections.create(
-                name=COLLECTION_NAME,
-                generative_config=Configure.Generative.google_gemini(
-                    model="gemini-2.5-flash"
-                ),
-                properties=[
-                    Property(name="chunk_text", data_type=DataType.TEXT),
-                    Property(name="doc_id", data_type=DataType.TEXT),
-                    Property(name="chunk_index", data_type=DataType.INT),
-                ],
-            )
+    if not _weaviate_client.collections.exists(COLLECTION_NAME):
+        _weaviate_client.collections.create(
+            name=COLLECTION_NAME,
+            generative_config=Configure.Generative.google_gemini(
+                model="gemini-2.5-flash"
+            ),
+            properties=[
+                Property(name="chunk_text", data_type=DataType.TEXT),
+                Property(name="doc_id", data_type=DataType.TEXT),
+                Property(name="chunk_index", data_type=DataType.INT),
+            ],
+        )
 
-        logger.info("Connected to Weaviate Cloud")
-        return _weaviate_client
-    except Exception as e:
-        logger.error(f"Failed to connect to Weaviate: {e} — operating without vector storage")
-        return None
+    logger.info("Connected to Weaviate Cloud")
+    return _weaviate_client
     
 
 
@@ -103,27 +95,20 @@ class ReaadingEngine:
         self.tts_generator = TTSGenerator()
 
     def store_document(self, state: ReadingState) -> ReadingState:
-        """Embed and store the document in Weaviate for RAG reuse (optional)."""
-        client = _get_weaviate_client()
-        doc_id = str(uuid.uuid4())
-        
-        # If Weaviate is not available, just generate doc_id and skip storage
-        if client is None:
-            logger.info("Weaviate not available — skipping document storage")
-            state["stored_doc_id"] = doc_id
-            return state
-        
-        # Weaviate is available — proceed with storage
+        """Embed and store the document in Weaviate for RAG reuse."""
         from langchain_google_genai import GoogleGenerativeAIEmbeddings
+        client = _get_weaviate_client()
         docs = client.collections.use(COLLECTION_NAME)
         embeddings = GoogleGenerativeAIEmbeddings(model="gemini-embedding-001")
         
         # Chunk and store
         chunks = LexiEngine.chunk_text(state["document_text"])
+        doc_id = str(uuid.uuid4())
+        
+        vectors = embeddings.embed_documents(chunks)
         
         with docs.batch.stream() as batch:
             for i, chunk in enumerate(chunks):
-                vector = embeddings.embed_query(chunk) 
                 obj_uuid = uuid.uuid5(uuid.NAMESPACE_URL, f"{doc_id}::chunk::{i}")
                 batch.add_object(
                     uuid=obj_uuid,
@@ -132,7 +117,7 @@ class ReaadingEngine:
                         "doc_id": doc_id,
                         "chunk_index": i
                     },
-                    vector=vector
+                    vector=vectors[i]
                 )
 
         if len(docs.batch.failed_objects) > 0:
@@ -141,51 +126,66 @@ class ReaadingEngine:
 
             for failed in docs.batch.failed_objects:
                 print(f"{failed.message}")
+            #     print(f"{failed.object_.properties}")
 
         state["stored_doc_id"] = doc_id
         return state
 
     def generate_summary(self, state: ReadingState) -> ReadingState:
         doc_id = state.get("stored_doc_id")
-        summary_type= state.get("summary_type", "concise").lower()
+        summary_type = state.get("summary_type", "concise").lower()
 
         if not doc_id:
             raise ValueError("Error: Document not stored properly.")
         
         client = _get_weaviate_client()
         
-        # If Weaviate is available, retrieve chunks from it
+        # If Weaviate is available, retrieve representative chunks from it
         if client is not None:
             docs = client.collections.use(COLLECTION_NAME)
-            filtered_chunks= docs.query.fetch_objects(filters=Filter.by_property("doc_id").equal(doc_id), include_vector=True)
+            filtered_chunks = docs.query.fetch_objects(
+                filters=Filter.by_property("doc_id").equal(doc_id),
+                include_vector=False
+            )
             if not filtered_chunks.objects:
                 state["summary"] = "Error: No document chunks found for summarization."
                 return state
             
             sorted_chunks = sorted(filtered_chunks.objects, key=lambda x: x.properties.get("chunk_index"))
-            full_document = "\n\n".join(x.properties.get("chunk_text", "") for x in sorted_chunks)
+            chunk_texts = [x.properties.get("chunk_text", "") for x in sorted_chunks]
+            selected = self._select_summary_chunks(chunk_texts, max_chunks=12)
         else:
-            # Weaviate not available — use original document text directly
-            logger.info("Weaviate not available — using original document text")
-            full_document = state.get("document_text", "")
+            # Weaviate not available — chunk original document text
+            logger.info("Weaviate not available — using chunked original document text")
+            doc_text = state.get("document_text", "")
+            chunks = []
+            start = 0
+            n = len(doc_text)
+            while start < n:
+                end = min(start + 1200, n)
+                chunks.append(doc_text[start:end])
+                if end == n:
+                    break
+                start = end - 150
+            selected = self._select_summary_chunks(chunks, max_chunks=12)
     
-        max_chars={
-        "brief": 4000,
-        "concise": 6000,
-        "detailed": 8000
-    }.get(summary_type, 6000)
+        context = "\n\n---\n\n".join(f"[Excerpt {i+1}] {c}" for i, c in enumerate(selected))
+        
+        max_chars = {"brief": 4000, "concise": 6000, "detailed": 8000}.get(summary_type, 6000)
 
         system = SystemMessage(content=f"""
         You are an academic summariser. 
         Produce a clear, structured summary suitable for being read aloud as an audio overview.
         Use natural spoken language, not written academic style. 
-        Adjust length of summary based on summary type:{summary_type} (either Detailed, Concise, or Brief). 
+        Adjust length of summary based on summary type: {summary_type} (either Detailed, Concise, or Brief). 
         Organise into: main topics, key points and explanations, key arguments/findings, conclusion.
         """)
 
-        humman = HumanMessage(content=f"Summarise the following academic text. Provide a {summary_type} summary suitable for audio narration:\n\n academic text: {full_document[:max_chars]}")
+        human = HumanMessage(
+            content=f"Summarise the following excerpts from an academic text. Provide a {summary_type} summary suitable for audio narration:\n\n{context[:max_chars]}"
+        )
 
-        response = llm.invoke([system, humman])
+        response = llm.invoke([system, human])
         state["summary"] = response.content
         state["summary_type"] = summary_type
         return state
@@ -196,8 +196,10 @@ class ReaadingEngine:
         Return ONLY a valid JSON array with objects: 
         {"term": str, "definition": str, "context_snippet": str (max 50 words from text)}
         Include 5-15 terms. No markdown fences.""")
-        
-        human = HumanMessage(content=f"Extract vocabulary from:\n\n{state['document_text']}")
+
+        # Context compression: use first ~8000 chars instead of full document
+        text_sample = state["document_text"][:8000]
+        human = HumanMessage(content=f"Extract vocabulary from:\n\n{text_sample}")
         response = llm.invoke([system, human])
         
         try:
@@ -206,88 +208,50 @@ class ReaadingEngine:
             state["vocab_terms"] = []
         return state
 
+    def _select_summary_chunks(self, chunks: list[str], max_chunks: int = 12) -> list[str]:
+        """
+        Select a representative subset of chunks for summarisation.
+        Strategy: keep first + last + evenly spaced middle chunks.
+        This preserves narrative arc while capping token usage.
+        """
+        if len(chunks) <= max_chunks:
+            return chunks
+
+        selected = [chunks[0]]  # introduction
+        remaining = max_chunks - 2
+        if remaining > 0:
+            step = max(1, (len(chunks) - 2) // remaining)
+            for i in range(1, len(chunks) - 1, step):
+                selected.append(chunks[i])
+                if len(selected) >= max_chunks - 1:
+                    break
+        selected.append(chunks[-1])  # conclusion
+        return selected[:max_chunks]
+
     def synthesise_tts(self, state: ReadingState, include_metadata: bool = True, temperature=1) -> ReadingState:
                 
         summary= state.get("summary", "No summary available for TTS.")
-        cfg = state.get("tts_config", {})
-        
-        # Provide defaults for missing config keys
-        voice = cfg.get("voice", "Zephyr")
-        speaker_label = cfg.get("speaker_label", "Reader")
+        cfg = state.get("tts_config", {"voice": "Zephyr", "speed": 1.0, "pitch": 0.0, "speaker_label": "Reader"})
         
         print(f"TTS Config: {cfg}")
-        print(f"generating audio with voice: {voice}, speaker: {speaker_label}")
+        print(f"generating audio with voice: {cfg['voice']}, speed: {cfg['speed']}, pitch: {cfg['pitch']}")
 
-        try:
-            audio_result= self.tts_generator.generate_audio(
-                text=summary,
-                voice=voice,
-                speaker_label=speaker_label,
-                temperature=temperature
-            )
+        audio_result= self.tts_generator.generate_audio(
+            text=summary,
+            voice=cfg.get("voice", "Zephyr"),
+            speaker_label=cfg.get("speaker_label", "Reader"),
+            temperature=temperature
 
-            raw_bytes=audio_result.get("audio_data",b"")
-            state["audio"] = audio_result
-            state["tts_audio_b64"] = base64.b64encode(raw_bytes).decode("utf-8")
+        )
 
-            print(f"✅ audio generation complete: {audio_result.get('audio_path', 'N/A')}")
-        except Exception as e:
-            # TTS failure should not break the entire analysis
-            print(f"⚠️ TTS generation failed (non-fatal): {e}")
-            state["audio"] = None
-            state["tts_audio_b64"] = None
-            state["tts_error"] = str(e)
+        raw_bytes=audio_result.get("audio_data",b"")
+        state["audio"] = audio_result
+        state["tts_audio_b64"] = base64.b64encode(raw_bytes).decode("utf-8")
+
+        print(f"audio generation complete: {audio_result['audio_path']}")
 
         return state
     
-    def simplify_text(self, text: str, level: str = "intermediate") -> str:
-        """Simplify text to a specific reading level using LLM.
-        
-        Args:
-            text: The text to simplify
-            level: "beginner" or "intermediate"
-            
-        Returns:
-            Simplified text at the requested level
-        """
-        level_prompts = {
-            "beginner": """
-                Rewrite this text for a BEGINNER reader (high school level):
-                - Use simple, everyday vocabulary
-                - Break complex sentences into shorter ones
-                - Explain concepts clearly without jargon
-                - Use analogies where helpful
-                - Keep tone friendly and accessible
-            """,
-            "intermediate": """
-                Rewrite this text for an INTERMEDIATE reader (undergraduate level):
-                - Use standard academic vocabulary
-                - Maintain sentence variety but keep clarity
-                - Briefly explain technical terms when first introduced
-                - Keep the original structure but improve readability
-                - Balance detail with accessibility
-            """
-        }
-        
-        prompt = level_prompts.get(level, level_prompts["intermediate"])
-        
-        system = SystemMessage(content=f"""You are an educational text simplifier.
-        {prompt}
-        
-        Preserve all key information, arguments, and findings.
-        Return ONLY the simplified text, no explanations or markdown fences.""")
-        
-        human = HumanMessage(content=f"Simplify the following text:\n\n{text}")
-        
-        try:
-            response = llm.invoke([system, human])
-            return response.content
-        except Exception as e:
-            logger.error(f"Failed to simplify text: {e}")
-            # Return original text if simplification fails
-            return text
-
-
 # Build reading graph — sequential but could be parallelised with Send API
 reading= ReaadingEngine()
 reading_graph_builder = StateGraph(ReadingState)

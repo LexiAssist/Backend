@@ -40,6 +40,9 @@ pdfplumber==0.11.9
 python-docx==1.2.0
 pymupdf==1.27.2.2
 
+# Redis
+redis>=5.0.0
+
 # Utilities
 httpx==0.28.1
 orjson==3.11.7

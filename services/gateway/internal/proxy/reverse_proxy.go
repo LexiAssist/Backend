@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 	
 	"github.com/labstack/echo/v4"
@@ -20,13 +21,14 @@ type ReverseProxy struct {
 	circuitBreakers   map[string]*CircuitBreaker
 	defaultCBThreshold int
 	defaultCBTimeout   time.Duration
+	internalAPIKey    string
 }
 
 // NewReverseProxy creates a new reverse proxy.
-func NewReverseProxy(cbThreshold int, cbTimeout time.Duration) *ReverseProxy {
+func NewReverseProxy(cbThreshold int, cbTimeout time.Duration, internalAPIKey string) *ReverseProxy {
 	return &ReverseProxy{
 		client: &http.Client{
-			Timeout: 120 * time.Second, // Increased for TTS generation
+			Timeout: 30 * time.Second,
 			Transport: &http.Transport{
 				MaxIdleConns:        100,
 				MaxIdleConnsPerHost: 10,
@@ -36,6 +38,7 @@ func NewReverseProxy(cbThreshold int, cbTimeout time.Duration) *ReverseProxy {
 		circuitBreakers:    make(map[string]*CircuitBreaker),
 		defaultCBThreshold: cbThreshold,
 		defaultCBTimeout:   cbTimeout,
+		internalAPIKey:     internalAPIKey,
 	}
 }
 
@@ -79,8 +82,14 @@ func (p *ReverseProxy) doProxyRequest(ctx context.Context, c echo.Context, targe
 	req.URL.Path = target.Path + req.URL.Path
 	req.Host = target.Host
 	
-	// Remove hop-by-hop headers
+	// Remove hop-by-hop headers but PRESERVE Content-Type for multipart/form-data
+	contentType := req.Header.Get("Content-Type")
 	removeHopByHopHeaders(req.Header)
+	
+	// Restore Content-Type if it was multipart/form-data (needed for file uploads)
+	if strings.Contains(contentType, "multipart/form-data") {
+		req.Header.Set("Content-Type", contentType)
+	}
 	
 	// Inject X-User-ID header if authenticated
 	if injectUserID {
@@ -93,6 +102,9 @@ func (p *ReverseProxy) doProxyRequest(ctx context.Context, c echo.Context, targe
 	if correlationID := req.Header.Get("X-Correlation-ID"); correlationID != "" {
 		req.Header.Set("X-Correlation-ID", correlationID)
 	}
+	
+	// Inject internal API key so upstream services can validate the request came from the gateway
+	req.Header.Set("X-Internal-Key", p.internalAPIKey)
 	
 	// Execute request
 	resp, err := p.client.Do(req)

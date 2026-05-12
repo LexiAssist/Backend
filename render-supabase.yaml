@@ -1,0 +1,413 @@
+# LexiAssist - Render.com Blueprint (Supabase PostgreSQL Version)
+# 
+# INSTRUCTIONS:
+# 1. Replace YOUR_PASSWORD and YOUR_PROJECT below with your actual Supabase credentials
+# 2. Push this file to your GitHub repo root
+# 3. In Render dashboard: New -> Blueprint -> Connect repo
+# 4. Set your secrets (GEMINI_API_KEY, etc.) in Render dashboard after deploy
+#
+# This version uses Supabase for PostgreSQL (has pgvector) + Render for everything else
+
+services:
+  # ===========================================================================
+  # PUBLIC: API Gateway (the only service exposed to the internet)
+  # ===========================================================================
+  - type: web
+    name: lexiassist-gateway
+    runtime: docker
+    rootDir: .
+    dockerfilePath: ./services/gateway/Dockerfile
+    dockerContext: .
+    plan: starter
+    envVars:
+      - key: PORT
+        value: 8080
+      - key: ENVIRONMENT
+        value: production
+      - key: LOG_LEVEL
+        value: info
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: lexiassist-redis
+          property: connectionString
+      - key: RATE_LIMIT_RPM
+        value: 100
+      - key: AI_RATE_LIMIT_RPM
+        value: 20
+      - key: AI_DAILY_QUOTA
+        value: 50
+      - key: CIRCUIT_BREAKER_THRESHOLD
+        value: 3
+      - key: CIRCUIT_BREAKER_TIMEOUT
+        value: 60s
+      - key: ALLOWED_ORIGINS
+        value: https://lexiassist.vercel.app,https://app.lexiassist.com
+      - key: USER_SERVICE_URL
+        fromService:
+          type: pserv
+          name: lexiassist-user-service
+          property: hostport
+      - key: CONTENT_SERVICE_URL
+        fromService:
+          type: pserv
+          name: lexiassist-content-service
+          property: hostport
+      - key: ANALYTICS_SERVICE_URL
+        fromService:
+          type: pserv
+          name: lexiassist-analytics-service
+          property: hostport
+      - key: NOTIFICATION_SERVICE_URL
+        fromService:
+          type: pserv
+          name: lexiassist-notification-service
+          property: hostport
+      - key: SYNC_SERVICE_URL
+        fromService:
+          type: pserv
+          name: lexiassist-sync-service
+          property: hostport
+      - key: AI_ORCHESTRATOR_URL
+        fromService:
+          type: pserv
+          name: lexiassist-ai-orchestrator
+          property: hostport
+      - key: RETRIEVAL_SERVICE_URL
+        fromService:
+          type: pserv
+          name: lexiassist-retrieval-service
+          property: hostport
+      - key: AUDIO_SERVICE_URL
+        fromService:
+          type: pserv
+          name: lexiassist-audio-service
+          property: hostport
+      - key: INGESTION_SERVICE_URL
+        fromService:
+          type: pserv
+          name: lexiassist-ingestion-service
+          property: hostport
+      - key: AI_SERVICE_URL
+        fromService:
+          type: pserv
+          name: lexiassist-ai-monolith
+          property: hostport
+      - key: AI_SERVICE_TIMEOUT
+        value: 120s
+      - key: INTERNAL_API_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        value: postgresql://postgres:YOUR_PASSWORD@db.YOUR_PROJECT.supabase.co:5432/postgres
+    healthCheckPath: /health
+
+  # ===========================================================================
+  # PRIVATE: Core Go Services (only reachable through Gateway)
+  # ===========================================================================
+  - type: pserv
+    name: lexiassist-user-service
+    runtime: docker
+    rootDir: .
+    dockerfilePath: ./services/user/Dockerfile
+    dockerContext: .
+    plan: starter
+    envVars:
+      - key: PORT
+        value: 8081
+      - key: DATABASE_URL
+        value: postgresql://postgres:YOUR_PASSWORD@db.YOUR_PROJECT.supabase.co:5432/postgres
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: lexiassist-redis
+          property: hostport
+      - key: PRIVATE_KEY_ENCRYPTION_KEY
+        generateValue: true
+      - key: BCRYPT_COST
+        value: 12
+      - key: ACCESS_TOKEN_TTL
+        value: 15m
+      - key: REFRESH_TOKEN_TTL
+        value: 720h
+      - key: BYPASS_EMAIL_VERIFICATION
+        value: "false"
+      - key: INTERNAL_API_KEY
+        fromService:
+          type: web
+          name: lexiassist-gateway
+          envVarKey: INTERNAL_API_KEY
+    disk:
+      name: jwt-keys
+      mountPath: /app/keys
+      sizeGB: 1
+
+  - type: pserv
+    name: lexiassist-content-service
+    runtime: docker
+    rootDir: .
+    dockerfilePath: ./services/content/Dockerfile
+    dockerContext: .
+    plan: starter
+    envVars:
+      - key: PORT
+        value: 8082
+      - key: DATABASE_URL
+        value: postgresql://postgres:YOUR_PASSWORD@db.YOUR_PROJECT.supabase.co:5432/postgres
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: lexiassist-redis
+          property: hostport
+      - key: MINIO_ENDPOINT
+        fromService:
+          type: pserv
+          name: lexiassist-minio
+          property: host
+      - key: MINIO_ACCESS_KEY
+        value: minioadmin
+      - key: MINIO_SECRET_KEY
+        generateValue: true
+      - key: MINIO_BUCKET
+        value: lexiassist-materials
+      - key: INGESTION_SERVICE_URL
+        fromService:
+          type: pserv
+          name: lexiassist-ingestion-service
+          property: hostport
+      - key: INTERNAL_API_KEY
+        fromService:
+          type: web
+          name: lexiassist-gateway
+          envVarKey: INTERNAL_API_KEY
+
+  - type: pserv
+    name: lexiassist-analytics-service
+    runtime: docker
+    rootDir: .
+    dockerfilePath: ./services/analytics/Dockerfile
+    dockerContext: .
+    plan: starter
+    envVars:
+      - key: PORT
+        value: 8083
+      - key: DATABASE_URL
+        value: postgresql://postgres:YOUR_PASSWORD@db.YOUR_PROJECT.supabase.co:5432/postgres
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: lexiassist-redis
+          property: hostport
+      - key: INTERNAL_API_KEY
+        fromService:
+          type: web
+          name: lexiassist-gateway
+          envVarKey: INTERNAL_API_KEY
+
+  - type: pserv
+    name: lexiassist-notification-service
+    runtime: docker
+    rootDir: .
+    dockerfilePath: ./services/notification-service/Dockerfile
+    dockerContext: .
+    plan: starter
+    envVars:
+      - key: PORT
+        value: 8084
+      - key: DATABASE_URL
+        value: postgresql://postgres:YOUR_PASSWORD@db.YOUR_PROJECT.supabase.co:5432/postgres
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USERNAME
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM
+        value: noreply@lexiassist.com
+      - key: FIREBASE_SERVICE_ACCOUNT_PATH
+        value: /etc/secrets/firebase-service-account.json
+      - key: INTERNAL_API_KEY
+        fromService:
+          type: web
+          name: lexiassist-gateway
+          envVarKey: INTERNAL_API_KEY
+    disk:
+      name: secrets
+      mountPath: /etc/secrets
+      sizeGB: 1
+
+  - type: pserv
+    name: lexiassist-sync-service
+    runtime: docker
+    rootDir: .
+    dockerfilePath: ./services/sync-service/Dockerfile
+    dockerContext: .
+    plan: starter
+    envVars:
+      - key: PORT
+        value: 8085
+      - key: DATABASE_URL
+        value: postgresql://postgres:YOUR_PASSWORD@db.YOUR_PROJECT.supabase.co:5432/postgres
+      - key: INTERNAL_API_KEY
+        fromService:
+          type: web
+          name: lexiassist-gateway
+          envVarKey: INTERNAL_API_KEY
+
+  # ===========================================================================
+  # PRIVATE: Python AI Services
+  # ===========================================================================
+  - type: pserv
+    name: lexiassist-ai-orchestrator
+    runtime: docker
+    rootDir: .
+    dockerfilePath: ./lexiassist-Python Services/services/orchestrator/Dockerfile
+    dockerContext: ./lexiassist-Python Services/services/orchestrator
+    plan: starter
+    envVars:
+      - key: PORT
+        value: 5005
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: INTERNAL_API_KEY
+        fromService:
+          type: web
+          name: lexiassist-gateway
+          envVarKey: INTERNAL_API_KEY
+      - key: DEFAULT_MODEL
+        value: gemini-2.5-flash
+      - key: ALLOWED_ORIGINS
+        value: https://lexiassist.vercel.app,https://app.lexiassist.com
+
+  - type: pserv
+    name: lexiassist-ingestion-service
+    runtime: docker
+    rootDir: .
+    dockerfilePath: ./lexiassist-Python Services/services/ingestion/Dockerfile
+    dockerContext: ./lexiassist-Python Services/services/ingestion
+    plan: starter
+    envVars:
+      - key: PORT
+        value: 5002
+      - key: INTERNAL_API_KEY
+        fromService:
+          type: web
+          name: lexiassist-gateway
+          envVarKey: INTERNAL_API_KEY
+
+  - type: pserv
+    name: lexiassist-retrieval-service
+    runtime: docker
+    rootDir: .
+    dockerfilePath: ./lexiassist-Python Services/services/retrieval/Dockerfile
+    dockerContext: ./lexiassist-Python Services/services/retrieval
+    plan: starter
+    envVars:
+      - key: PORT
+        value: 5003
+      - key: DATABASE_URL
+        value: postgresql://postgres:YOUR_PASSWORD@db.YOUR_PROJECT.supabase.co:5432/postgres
+      - key: INTERNAL_API_KEY
+        fromService:
+          type: web
+          name: lexiassist-gateway
+          envVarKey: INTERNAL_API_KEY
+
+  - type: pserv
+    name: lexiassist-audio-service
+    runtime: docker
+    rootDir: .
+    dockerfilePath: ./lexiassist-Python Services/services/audio/Dockerfile
+    dockerContext: ./lexiassist-Python Services/services/audio
+    plan: starter
+    envVars:
+      - key: PORT
+        value: 5004
+      - key: INTERNAL_API_KEY
+        fromService:
+          type: web
+          name: lexiassist-gateway
+          envVarKey: INTERNAL_API_KEY
+
+  - type: pserv
+    name: lexiassist-evaluation-service
+    runtime: docker
+    rootDir: .
+    dockerfilePath: ./lexiassist-Python Services/services/evaluation/Dockerfile
+    dockerContext: ./lexiassist-Python Services/services/evaluation
+    plan: starter
+    envVars:
+      - key: PORT
+        value: 5006
+      - key: DATABASE_URL
+        value: postgresql://postgres:YOUR_PASSWORD@db.YOUR_PROJECT.supabase.co:5432/postgres
+      - key: INTERNAL_API_KEY
+        fromService:
+          type: web
+          name: lexiassist-gateway
+          envVarKey: INTERNAL_API_KEY
+
+  - type: pserv
+    name: lexiassist-ai-monolith
+    runtime: docker
+    rootDir: .
+    dockerfilePath: ./lexiassist-ai-main/Dockerfile
+    dockerContext: ./lexiassist-ai-main
+    plan: standard
+    envVars:
+      - key: PORT
+        value: 8000
+      - key: DATABASE_URL
+        value: postgresql://postgres:YOUR_PASSWORD@db.YOUR_PROJECT.supabase.co:5432/postgres
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: lexiassist-redis
+          property: hostport
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: WEAVIATE_URL
+        sync: false
+      - key: WEAVIATE_API_KEY
+        sync: false
+      - key: COHERE_API_KEY
+        sync: false
+      - key: INTERNAL_API_KEY
+        fromService:
+          type: web
+          name: lexiassist-gateway
+          envVarKey: INTERNAL_API_KEY
+      - key: ALLOWED_ORIGINS
+        value: https://lexiassist.vercel.app,https://app.lexiassist.com
+
+  # ===========================================================================
+  # PRIVATE: MinIO File Storage
+  # ===========================================================================
+  - type: pserv
+    name: lexiassist-minio
+    runtime: docker
+    image: minio/minio:latest
+    plan: starter
+    dockerCommand: server /data --console-address :9001
+    envVars:
+      - key: MINIO_ROOT_USER
+        value: minioadmin
+      - key: MINIO_ROOT_PASSWORD
+        generateValue: true
+    disk:
+      name: minio-data
+      mountPath: /data
+      sizeGB: 10
+
+  # ===========================================================================
+  # MANAGED: Redis (Render native - free tier)
+  # ===========================================================================
+  - type: redis
+    name: lexiassist-redis
+    plan: free
+    ipAllowList: []

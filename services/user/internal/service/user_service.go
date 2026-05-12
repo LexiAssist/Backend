@@ -9,11 +9,13 @@ import (
 	"net"
 	"net/http"
 	"net/mail"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
+	"go.uber.org/zap"
 
 	"lexiassist/services/user/internal/model"
 	"lexiassist/services/user/internal/repository"
@@ -106,6 +108,7 @@ type UserResponse struct {
 	AcademicLevel string    `json:"academic_level,omitempty"`
 	Timezone      string    `json:"timezone,omitempty"`
 	EmailVerified bool      `json:"email_verified"`
+	Role          string    `json:"role"`
 	CreatedAt     time.Time `json:"created_at"`
 }
 
@@ -280,16 +283,22 @@ func (s *userService) Register(ctx context.Context, req *RegisterRequest) (*User
 		return nil, echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 
+	// Check if email verification is bypassed (development only)
+	bypassVerification := os.Getenv("BYPASS_EMAIL_VERIFICATION") == "true"
+	if bypassVerification {
+		logger.Warn("EMAIL VERIFICATION BYPASSED - This should only be used in development!")
+	}
+
 	// Create user
 	user := &model.User{
-		Email:         req.Email,
+		Email:         strings.ToLower(req.Email),
 		PasswordHash:  passwordHash,
 		FirstName:     req.FirstName,
 		LastName:      req.LastName,
 		School:        req.School,
 		Department:    req.Department,
 		AcademicLevel: req.AcademicLevel,
-		EmailVerified: true, // Always verify for local dev/testing without SMTP
+		EmailVerified: bypassVerification, // Auto-verify if bypass is enabled
 		IsActive:      true,
 	}
 
@@ -298,23 +307,25 @@ func (s *userService) Register(ctx context.Context, req *RegisterRequest) (*User
 		return nil, echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
 	}
 
-	// Generate and store verification code
-	verificationCode := auth.GenerateVerificationCode()
-	expiresAt := time.Now().Add(s.config.VerificationCodeTTL)
-	
-	if err := s.userRepo.SetVerificationCode(ctx, user.ID, verificationCode, expiresAt); err != nil {
-		logger.Error("failed to set verification code")
-		// Don't fail registration, just log the error
-	}
+	// Generate and store verification code (only if not bypassed)
+	if !bypassVerification {
+		verificationCode := auth.GenerateVerificationCode()
+		expiresAt := time.Now().Add(s.config.VerificationCodeTTL)
+		
+		if err := s.userRepo.SetVerificationCode(ctx, user.ID, verificationCode, expiresAt); err != nil {
+			logger.Error("failed to set verification code")
+			// Don't fail registration, just log the error
+		}
 
-	// Store verification code in Redis as backup
-	redisKey := fmt.Sprintf("email_verification:%s", user.ID.String())
-	if err := s.redisClient.Set(ctx, redisKey, verificationCode, s.config.VerificationCodeTTL); err != nil {
-		logger.Error("failed to store verification code in redis")
-	}
+		// Store verification code in Redis as backup
+		redisKey := fmt.Sprintf("email_verification:%s", user.ID.String())
+		if err := s.redisClient.Set(ctx, redisKey, verificationCode, s.config.VerificationCodeTTL); err != nil {
+			logger.Error("failed to store verification code in redis")
+		}
 
-	// TODO: Send verification email (async via notification service)
-	logger.Info("verification code generated")
+		// TODO: Send verification email (async via notification service)
+		logger.Info("verification code generated", zap.String("user_id", user.ID.String()))
+	}
 
 	return mapUserToResponse(user), nil
 }
@@ -447,10 +458,11 @@ func (s *userService) Login(ctx context.Context, req *LoginRequest, clientInfo *
 
 // createTokenPair creates a new access and refresh token pair.
 func (s *userService) createTokenPair(ctx context.Context, user *model.User, clientInfo *ClientInfo) (*TokenResponse, error) {
-	// Generate tokens
+	// Generate tokens with role
 	tokenPair, err := s.jwtManager.GenerateTokenPair(
 		user.ID.String(),
 		user.Email,
+		user.Role,
 		s.config.AccessTokenTTL,
 		s.config.RefreshTokenTTL,
 	)
@@ -874,6 +886,7 @@ func mapUserToResponse(user *model.User) *UserResponse {
 		AcademicLevel: user.AcademicLevel,
 		Timezone:      user.Timezone,
 		EmailVerified: user.EmailVerified,
+		Role:          user.Role,
 		CreatedAt:     user.CreatedAt,
 	}
 }

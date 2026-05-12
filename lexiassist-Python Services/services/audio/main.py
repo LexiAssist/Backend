@@ -1,37 +1,30 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Response
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Depends, Header, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import speech_recognition as sr
 from pydub import AudioSegment
+from gtts import gTTS
 import os
 import uvicorn
 import uuid
 import tempfile
-import io
 from datetime import datetime
-from fastapi.responses import StreamingResponse
-from gtts import gTTS
-import logging
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+
+def verify_internal_key(request: Request, x_internal_key: str = Header(None)):
+    if request.url.path in ("/", "/health"):
+        return
+    expected = os.getenv("INTERNAL_API_KEY", "dev-internal-key-change-in-production")
+    if not x_internal_key or x_internal_key != expected:
+        raise HTTPException(status_code=403, detail="Invalid or missing internal key")
+
 
 # Initialize FastAPI
 app = FastAPI(
     title="LexiAssist Audio Service",
     description="Speech-to-Text using SpeechRecognition + pydub (supports ALL formats)",
-    version="2.1.0"
-)
-
-# CORS
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    version="2.1.0",
+    dependencies=[Depends(verify_internal_key)],
 )
 
 # Create recognizer
@@ -54,7 +47,7 @@ class TextToSpeechRequest(BaseModel):
 
 class SpeechToTextResponse(BaseModel):
     text: str
-    confidence: float  # Note: Estimated value (0.85) — Google free STT does not return real confidence
+    confidence: float
     language: str
     original_format: str
 
@@ -69,8 +62,8 @@ async def root():
         "status": "healthy",
         "service": "audio",
         "port": 5004,
-        "version": "2.2.0",
-        "engine": "SpeechRecognition + pydub + gTTS",
+        "version": "2.1.0",
+        "engine": "SpeechRecognition + pydub",
         "supported_formats": sorted(list(SUPPORTED_FORMATS)),
         "max_file_size_mb": MAX_FILE_SIZE_MB
     }
@@ -208,59 +201,69 @@ async def speech_to_text(
             cleanup_files(input_path)
 
 @app.post("/api/v1/ai/text-to-speech")
-async def text_to_speech(request: TextToSpeechRequest):
+async def text_to_speech(
+    text: str = Form(..., description="Text to convert to speech"),
+    language: str = Form("en", description="Language code (en, es, fr, de, etc.)"),
+    slow: bool = Form(False, description="Slow speech")
+):
     """
-    Convert text to speech using gTTS (Google Text-to-Speech).
+    Convert text to speech using Google Text-to-Speech (gTTS).
+    Returns MP3 audio file.
     """
+    output_path = None
+    
     try:
-        # Map voice_id to gTTS language code
-        voice_to_lang = {
-            "en-US-JennyNeural": "en",
-            "en-GB-SoniaNeural": "en",
-            "es-ES-ElviraNeural": "es",
-            "fr-FR-DeniseNeural": "fr",
-            "de-DE-KatjaNeural": "de",
-            "it-IT-ElsaNeural": "it",
-            "pt-PT-RaquelNeural": "pt",
-            "ja-JP-NanamiNeural": "ja",
-            "zh-CN-XiaoxiaoNeural": "zh",
-            "ko-KR-SunHiNeural": "ko",
-            "ar-SA-ZariyahNeural": "ar",
-            "hi-IN-SwaraNeural": "hi",
-            "ru-RU-SvetlanaNeural": "ru",
-        }
+        # Validate text length
+        if len(text) > 5000:
+            raise HTTPException(status_code=400, detail="Text too long. Maximum 5000 characters.")
         
-        lang = voice_to_lang.get(request.voice_id, "en")
+        if not text.strip():
+            raise HTTPException(status_code=400, detail="Text cannot be empty.")
         
-        # gTTS slow mode: True = slow, False = normal
-        # Our speed: 1.0 = normal, < 1.0 = slow
-        slow = request.speed < 1.0
+        # Generate unique filename
+        temp_id = str(uuid.uuid4())[:8]
+        output_path = os.path.join(TEMP_DIR, f"tts_{temp_id}.mp3")
         
-        logger.info(f"🔊 TTS Request: text_length={len(request.text)}, lang={lang}, slow={slow}")
+        print(f"\n🔊 Generating TTS:")
+        print(f"   Text length: {len(text)} chars")
+        print(f"   Language: {language}")
+        print(f"   Slow: {slow}")
         
-        # Generate TTS using gTTS
-        tts = gTTS(text=request.text, lang=lang, slow=slow)
+        # Generate speech using gTTS
+        tts = gTTS(text=text, lang=language, slow=slow)
+        tts.save(output_path)
         
-        # Save to bytes buffer
-        mp3_fp = io.BytesIO()
-        tts.write_to_fp(mp3_fp)
-        mp3_fp.seek(0)
+        print(f"   ✅ TTS generated: {output_path}")
         
-        audio_data = mp3_fp.read()
-        logger.info(f"✅ TTS Generated: {len(audio_data)} bytes")
+        # Return audio file
+        return FileResponse(
+            output_path,
+            media_type="audio/mpeg",
+            filename=f"speech_{temp_id}.mp3",
+            background=None
+        )
         
-        if len(audio_data) == 0:
-            raise HTTPException(status_code=500, detail="TTS generated empty audio")
-            
-        return Response(content=audio_data, media_type="audio/mpeg")
-        
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"❌ Text-to-Speech error: {e}")
+        # Cleanup on error
+        if output_path and os.path.exists(output_path):
+            os.remove(output_path)
+        print(f"❌ TTS Error: {e}")
         import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Text-to-Speech failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"TTS generation failed: {str(e)}")
+
+
+# Keep old endpoint for backward compatibility
+@app.post("/text-to-speech")
+async def text_to_speech_legacy(request: TextToSpeechRequest):
+    """
+    Legacy endpoint - redirects to new implementation.
+    """
+    return await text_to_speech(
+        text=request.text,
+        language=request.voice_id[:2] if request.voice_id else "en",
+        slow=request.speed < 1.0
+    )
 
 @app.get("/api/v1/ai/languages")
 async def list_languages():

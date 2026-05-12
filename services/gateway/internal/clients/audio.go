@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"strings"
 )
 
 // AudioClient is a client for the Python Audio Service
@@ -25,12 +26,22 @@ func NewAudioClient(baseURL, internalAPIKey string) *AudioClient {
 
 // SpeechToText converts audio to text
 func (c *AudioClient) SpeechToText(ctx context.Context, audioData []byte, contentType, language string) (*TranscriptionResponse, error) {
+	// Determine file extension based on contentType
+	ext := "bin"
+	if strings.Contains(contentType, "wav") {
+		ext = "wav"
+	} else if strings.Contains(contentType, "mp3") {
+		ext = "mp3"
+	} else if strings.Contains(contentType, "ogg") {
+		ext = "ogg"
+	}
+
 	// Build multipart form
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 
 	// Add audio file
-	part, err := writer.CreateFormFile("audio", "audio.bin")
+	part, err := writer.CreateFormFile("audio", fmt.Sprintf("audio.%s", ext))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create form file: %w", err)
 	}
@@ -48,7 +59,7 @@ func (c *AudioClient) SpeechToText(ctx context.Context, audioData []byte, conten
 	}
 
 	// Create request
-	url := c.config.BaseURL + "/speech-to-text"
+	url := c.config.BaseURL + "/api/v1/ai/speech-to-text"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, &body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -83,7 +94,7 @@ func (c *AudioClient) SpeechToText(ctx context.Context, audioData []byte, conten
 
 // GetSupportedLanguages returns the list of supported languages
 func (c *AudioClient) GetSupportedLanguages(ctx context.Context) (map[string]interface{}, error) {
-	resp, err := c.doWithRetry(ctx, http.MethodGet, "/languages", nil, "application/json")
+	resp, err := c.doWithRetry(ctx, http.MethodGet, "/api/v1/ai/languages", nil, "application/json")
 	if err != nil {
 		return nil, err
 	}

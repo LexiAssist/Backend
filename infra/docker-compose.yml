@@ -1,7 +1,7 @@
 services:
   # PostgreSQL Database
   postgres:
-    image: pgvector/pgvector:pg15
+    image: postgres:15-alpine
     container_name: lexiassist-postgres
     environment:
       POSTGRES_USER: lexiassist
@@ -88,6 +88,7 @@ services:
       - MINIO_SECRET_KEY=minioadmin_secret
       - MINIO_BUCKET=lexiassist-materials
       - INGESTION_SERVICE_URL=http://ingestion-service:5002
+      - REDIS_URL=redis:6379
       - INTERNAL_API_KEY=${INTERNAL_API_KEY:-dev-internal-key}
     ports:
       - "8082:8082"
@@ -216,7 +217,7 @@ services:
       - ENVIRONMENT=development
       - LOG_LEVEL=info
       - PORT=8080
-      - ALLOWED_ORIGINS=http://localhost:3000
+      - ALLOWED_ORIGINS=*
       - USER_SERVICE_URL=http://user-service:8081
       - CONTENT_SERVICE_URL=http://content-service:8082
       - ANALYTICS_SERVICE_URL=http://analytics-service:8083
@@ -310,17 +311,13 @@ services:
   
   # AI Orchestrator (Port 5005)
   ai-orchestrator:
-    build:
-      context: ../lexiassist-Python Services
-      dockerfile: services/orchestrator/Dockerfile
     image: lexiassist/ai-orchestrator:latest
     container_name: lexiassist-ai-orchestrator
     environment:
       - PORT=5005
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - ANALYTICS_WEBHOOK_URL=http://analytics-service:8083/api/v1/internal/ai-usage
-      - DEFAULT_MODEL=gemini-2.0-flash
-      - ALLOWED_ORIGINS=http://localhost:3000
+      - DEFAULT_MODEL=gemini-1.5-flash
       - LOG_LEVEL=info
     ports:
       - "5005:5005"
@@ -328,16 +325,13 @@ services:
       - lexiassist-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5005/health')"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:5005/health"]
       interval: 30s
       timeout: 10s
       retries: 3
 
   # Retrieval Service (Port 5003)
   retrieval-service:
-    build:
-      context: ../lexiassist-Python Services
-      dockerfile: services/retrieval/Dockerfile
     image: lexiassist/retrieval-service:latest
     container_name: lexiassist-retrieval-service
     environment:
@@ -353,7 +347,7 @@ services:
       - lexiassist-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5003/health')"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:5003/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -374,16 +368,13 @@ services:
       - lexiassist-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5004/health')"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:5004/health"]
       interval: 30s
       timeout: 10s
       retries: 3
 
   # Ingestion Service (Port 5002)
   ingestion-service:
-    build:
-      context: ../lexiassist-Python Services
-      dockerfile: services/ingestion/Dockerfile
     image: lexiassist/ingestion-service:latest
     container_name: lexiassist-ingestion-service
     environment:
@@ -402,22 +393,18 @@ services:
       - lexiassist-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5002/health')"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:5002/health"]
       interval: 30s
       timeout: 10s
       retries: 3
 
   # Evaluation Service (Port 5006)
   evaluation-service:
-    build:
-      context: ../lexiassist-Python Services
-      dockerfile: services/evaluation/Dockerfile
     image: lexiassist/evaluation-service:latest
     container_name: lexiassist-evaluation-service
     environment:
       - PORT=5006
       - DATABASE_URL=postgresql://lexiassist:lexiassist_secret@postgres:5432/lexiassist
-      - ALLOWED_ORIGINS=http://localhost:3000
       - LOG_LEVEL=info
     ports:
       - "5006:5006"
@@ -428,7 +415,7 @@ services:
       - lexiassist-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5006/health')"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:5006/health"]
       interval: 30s
       timeout: 10s
       retries: 3

@@ -40,7 +40,7 @@ google-auth-httplib2==0.2.0
 # Audio Processing
 SpeechRecognition==3.10.0
 pydub==0.25.1
-gTTS==2.5.1  # Google Text-to-Speech
+gTTS==2.5.4
 
 # PDF Processing
 pdfplumber==0.11.9
@@ -80,7 +80,7 @@ kombu==5.6.2
 amqp==5.3.1
 billiard==4.2.4
 vine==5.1.0
-click>=7.1,<8.2  # Compatible with uvicorn, gTTS, and typer 0.9.0
+click>=8.1.2,<8.2
 click-didyoumean==0.3.1
 click-plugins==1.1.1.2
 click-repl==0.3.0
@@ -101,7 +101,7 @@ tzlocal==5.3.1
 
 # CLI/UI
 rich==14.3.3
-typer==0.9.0  # Compatible with click < 8.2
+typer==0.9.0
 shellingham==1.5.4
 Pygments==2.19.2
 markdown-it-py==4.0.0

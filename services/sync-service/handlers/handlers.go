@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 
@@ -42,8 +41,11 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 		api.GET("/health", h.HealthCheck)
 
 		// WebSocket endpoint (requires auth)
-		// WebSocket auth uses query param token since browsers can't set headers during handshake
-		api.GET("/sync", h.handleWebSocketWithAuth)
+		ws := api.Group("")
+		ws.Use(middleware.AuthRequired())
+		{
+			ws.GET("/sync", h.hub.HandleWebSocket)
+		}
 
 		// Protected routes
 		protected := api.Group("")
@@ -480,49 +482,6 @@ func parseInt(s string) (int, error) {
 	var i int
 	_, err := fmt.Sscanf(s, "%d", &i)
 	return i, err
-}
-
-// handleWebSocketWithAuth handles WebSocket connections with token from query param
-// This is needed because browsers can't set custom headers during WebSocket handshake
-func (h *Handler) handleWebSocketWithAuth(c *gin.Context) {
-	// Extract token from query params
-	token := c.Query("token")
-	if token == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Token required"})
-		return
-	}
-	
-	// Parse token to extract user_id (same logic as AuthRequired middleware)
-	importToken, _, err := new(jwt.Parser).ParseUnverified(token, jwt.MapClaims{})
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
-		return
-	}
-	
-	claims, ok := importToken.Claims.(jwt.MapClaims)
-	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token claims"})
-		return
-	}
-	
-	userIDStr, ok := claims["user_id"].(string)
-	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Missing user_id in token"})
-		return
-	}
-	
-	// Parse user_id as UUID (WebSocket hub expects uuid.UUID type)
-	userID, err := uuid.Parse(userIDStr)
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid user_id format"})
-		return
-	}
-	
-	// Set user_id in context for the WebSocket handler
-	c.Set("user_id", userID)
-	
-	// Call the actual WebSocket handler
-	h.hub.HandleWebSocket(c)
 }
 
 

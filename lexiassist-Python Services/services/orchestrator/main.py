@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -28,6 +28,75 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.middleware("http")
+async def internal_auth_middleware(request: Request, call_next):
+    if request.url.path in ("/", "/health"):
+        return await call_next(request)
+    key = request.headers.get("X-Internal-Key")
+    expected = os.getenv("INTERNAL_API_KEY", "dev-internal-key")
+    if key != expected:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=401, content={"detail": "Invalid internal key"})
+    return await call_next(request)
+
+# ─── Model Router & Cost Tracking ───────────────────────────────────────
+
+MODEL_PRICING = {
+    "gemini-2.5-flash-lite": {"input": 0.00010, "output": 0.00040, "description": "Cheapest, fast"},
+    "gemini-2.5-flash": {"input": 0.00030, "output": 0.00250, "description": "Balanced"},
+    "gemini-2.5-pro": {"input": 0.00125, "output": 0.01000, "description": "Best quality"},
+}
+
+DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "gemini-2.5-flash")
+
+class ModelRouter:
+    def select_model(self, task_type: str, query: str = "", context_chunks: List[str] = None, override: str = None) -> str:
+        if override and override in MODEL_PRICING:
+            return override
+
+        # Estimate input size (chars ≈ tokens * 4 for English)
+        context_len = sum(len(c) for c in (context_chunks or []))
+        estimated_input_chars = len(query) + context_len
+
+        # Small, simple tasks → cheapest model
+        if estimated_input_chars < 1500 and task_type in ("chat", "generate_summary"):
+            return "gemini-2.5-flash-lite"
+
+        # Large context or complex generation → pro
+        if estimated_input_chars > 12000 or task_type in ("generate_quiz", "generate_flashcards"):
+            # For very large contexts (> ~15k chars ≈ 4k tokens), use pro; otherwise default flash
+            if estimated_input_chars > 15000:
+                return "gemini-2.5-pro"
+            return DEFAULT_MODEL
+
+        # Default balanced model
+        return DEFAULT_MODEL
+
+router = ModelRouter()
+
+_user_costs: Dict[str, List[Dict]] = {}
+
+def _calculate_cost(model_name: str, input_tokens: int, output_tokens: int) -> float:
+    pricing = MODEL_PRICING.get(model_name, MODEL_PRICING[DEFAULT_MODEL])
+    input_cost = (input_tokens / 1000) * pricing["input"]
+    output_cost = (output_tokens / 1000) * pricing["output"]
+    return input_cost + output_cost
+
+def _track_cost(user_id: str, task_type: str, model_name: str, input_tokens: int, output_tokens: int, cost_usd: float):
+    if user_id not in _user_costs:
+        _user_costs[user_id] = []
+    _user_costs[user_id].append({
+        "timestamp": datetime.now().isoformat(),
+        "task_type": task_type,
+        "model": model_name,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "cost_usd": cost_usd,
+    })
+    # Cap at last 1000 entries
+    if len(_user_costs[user_id]) > 1000:
+        _user_costs[user_id] = _user_costs[user_id][-1000:]
+
 # ─── Configure Gemini AI (required) ─────────────────────────────────────
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -40,7 +109,13 @@ if not GEMINI_API_KEY:
     )
 
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel(MODEL_NAME)
+_model_cache: Dict[str, genai.GenerativeModel] = {}
+
+def _get_model(model_name: str) -> genai.GenerativeModel:
+    if model_name not in _model_cache:
+        _model_cache[model_name] = genai.GenerativeModel(model_name)
+    return _model_cache[model_name]
+
 print(f"✅ Gemini AI configured (model: {MODEL_NAME})")
 
 # ─── Conversation History (in-memory with TTL) ──────────────────────────
@@ -74,12 +149,17 @@ class ChatRequest(BaseModel):
     material_id: Optional[str] = Field(None, description="Specific document context")
     context_chunks: List[str] = Field(default=[], description="Retrieved text chunks from Retrieval Service")
     conversation_id: Optional[str] = Field(None, description="Continue existing conversation")
+    model: Optional[str] = Field(None, description="Override model: gemini-2.5-flash-lite, gemini-2.5-flash, gemini-2.5-pro")
 
 class ChatResponse(BaseModel):
     response: str
     conversation_id: str
     tokens_used: int
     model: str
+    model_used: str
+    input_tokens: int
+    output_tokens: int
+    cost_usd: float
     sources: List[str]
 
 class ContextItem(BaseModel):
@@ -153,13 +233,24 @@ Your response:"""
     return prompt
 
 
-async def call_gemini(prompt: str) -> tuple:
-    """Call Gemini and return (response_text, tokens_used)."""
+async def call_gemini(prompt: str, model_name: str = None, task_type: str = "unknown", user_id: str = None) -> tuple:
+    """Call Gemini and return (response_text, input_tokens, output_tokens, cost_usd, model_used)."""
+    target_model = model_name or MODEL_NAME
+    model = _get_model(target_model)
     response = model.generate_content(prompt)
-    tokens_used = 0
+    
+    input_tokens = 0
+    output_tokens = 0
     if hasattr(response, 'usage_metadata') and response.usage_metadata:
-        tokens_used = getattr(response.usage_metadata, 'total_token_count', 0)
-    return response.text, tokens_used
+        input_tokens = getattr(response.usage_metadata, 'prompt_token_count', 0)
+        output_tokens = getattr(response.usage_metadata, 'candidates_token_count', 0)
+    
+    cost_usd = _calculate_cost(target_model, input_tokens, output_tokens)
+    if user_id:
+        _track_cost(user_id, task_type, target_model, input_tokens, output_tokens, cost_usd)
+    
+    print(f"💰 {task_type} | {target_model} | ${cost_usd:.6f} | {input_tokens}+{output_tokens} tokens")
+    return response.text, input_tokens, output_tokens, cost_usd, target_model
 
 
 # ─── Chat Endpoint ──────────────────────────────────────────────────────
@@ -183,8 +274,12 @@ async def chat(request: ChatRequest):
     print(f"   Context chunks: {len(request.context_chunks)}")
     print(f"   History length: {len(chat_history)}")
 
+    model_name = router.select_model("chat", request.query, request.context_chunks, request.model)
+
     try:
-        ai_response, tokens_used = await call_gemini(prompt)
+        ai_response, input_tokens, output_tokens, cost_usd, model_used = await call_gemini(
+            prompt, model_name=model_name, task_type="chat", user_id=request.user_id
+        )
 
         # Update conversation history
         chat_history.append({
@@ -202,13 +297,18 @@ async def chat(request: ChatRequest):
         conversation_history[conversation_id] = chat_history[-10:]
         conversation_last_active[conversation_id] = datetime.now()
 
-        print(f"   ✅ Response generated ({len(ai_response)} chars, {tokens_used} tokens)")
+        total_tokens = input_tokens + output_tokens
+        print(f"   ✅ Response generated ({len(ai_response)} chars, {total_tokens} tokens)")
 
         return ChatResponse(
             response=ai_response,
             conversation_id=conversation_id,
-            tokens_used=tokens_used,
+            tokens_used=total_tokens,
             model=MODEL_NAME,
+            model_used=model_used,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_usd=cost_usd,
             sources=[f"chunk_{i}" for i in range(len(request.context_chunks))]
         )
 
@@ -257,6 +357,9 @@ async def chat_stream(request: ChatRequest):
     print(f"   Query: {request.query[:50]}...")
     print(f"   Context chunks: {len(request.context_chunks)}")
     
+    model_name = router.select_model("chat", request.query, request.context_chunks, request.model)
+    model = _get_model(model_name)
+    
     async def generate_stream():
         try:
             # Start with conversation_id event
@@ -266,7 +369,8 @@ async def chat_stream(request: ChatRequest):
             response = model.generate_content(prompt, stream=True)
             
             full_response = ""
-            tokens_used = 0
+            input_tokens = 0
+            output_tokens = 0
             
             for chunk in response:
                 if chunk.text:
@@ -278,7 +382,12 @@ async def chat_stream(request: ChatRequest):
             
             # Get token count if available
             if hasattr(response, 'usage_metadata') and response.usage_metadata:
-                tokens_used = getattr(response.usage_metadata, 'total_token_count', 0)
+                input_tokens = getattr(response.usage_metadata, 'prompt_token_count', 0)
+                output_tokens = getattr(response.usage_metadata, 'candidates_token_count', 0)
+            
+            cost_usd = _calculate_cost(model_name, input_tokens, output_tokens)
+            if request.user_id:
+                _track_cost(request.user_id, "chat_stream", model_name, input_tokens, output_tokens, cost_usd)
             
             # Update conversation history
             chat_history.append({
@@ -297,13 +406,16 @@ async def chat_stream(request: ChatRequest):
             conversation_last_active[conversation_id] = datetime.now()
             
             # Send completion event
-            yield f"data: {json.dumps({
+            yield f"data: {json.dumps({{
                 'complete': True,
                 'conversation_id': conversation_id,
-                'tokens_used': tokens_used,
+                'input_tokens': input_tokens,
+                'output_tokens': output_tokens,
+                'cost_usd': cost_usd,
                 'model': MODEL_NAME,
+                'model_used': model_name,
                 'sources': [f"chunk_{i}" for i in range(len(request.context_chunks))]
-            })}\n\n"
+            }})}\n\n"
             
             # End of stream
             yield "data: [DONE]\n\n"
@@ -359,13 +471,20 @@ Format as valid JSON with this structure:
     ]
 }}"""
 
-        ai_response, tokens = await call_gemini(prompt)
+        model_name = router.select_model("generate_quiz", request.query, request.context_chunks, request.model)
+        ai_response, input_tokens, output_tokens, cost_usd, model_used = await call_gemini(
+            prompt, model_name=model_name, task_type="generate_quiz", user_id=request.user_id
+        )
 
         return {
             "quiz": ai_response,
             "type": "quiz",
             "model": MODEL_NAME,
-            "tokens_used": tokens,
+            "model_used": model_used,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "cost_usd": cost_usd,
+            "tokens_used": input_tokens + output_tokens,
             "context_chunks_used": len(request.context_chunks)
         }
 
@@ -395,13 +514,20 @@ Include:
 
 Write in clear, student-friendly language with bullet points for key takeaways."""
 
-        ai_response, tokens = await call_gemini(prompt)
+        model_name = router.select_model("generate_summary", request.query, request.context_chunks, request.model)
+        ai_response, input_tokens, output_tokens, cost_usd, model_used = await call_gemini(
+            prompt, model_name=model_name, task_type="generate_summary", user_id=request.user_id
+        )
 
         return {
             "summary": ai_response,
             "type": "summary",
             "model": MODEL_NAME,
-            "tokens_used": tokens,
+            "model_used": model_used,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "cost_usd": cost_usd,
+            "tokens_used": input_tokens + output_tokens,
             "context_chunks_used": len(request.context_chunks)
         }
 
@@ -439,19 +565,57 @@ Format as valid JSON:
     ]
 }}"""
 
-        ai_response, tokens = await call_gemini(prompt)
+        model_name = router.select_model("generate_flashcards", request.query, request.context_chunks, request.model)
+        ai_response, input_tokens, output_tokens, cost_usd, model_used = await call_gemini(
+            prompt, model_name=model_name, task_type="generate_flashcards", user_id=request.user_id
+        )
 
         return {
             "flashcards": ai_response,
             "type": "flashcards",
             "model": MODEL_NAME,
-            "tokens_used": tokens,
+            "model_used": model_used,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "cost_usd": cost_usd,
+            "tokens_used": input_tokens + output_tokens,
             "context_chunks_used": len(request.context_chunks)
         }
 
     except Exception as e:
         print(f"❌ Flashcards generation error: {e}")
         raise HTTPException(status_code=500, detail=f"Flashcards generation failed: {str(e)}")
+
+
+# ─── Analytics / Cost Endpoints ─────────────────────────────────────────
+
+@app.get("/analytics/costs")
+async def get_system_costs():
+    """Admin: total costs across all users today."""
+    today = datetime.now().date().isoformat()
+    total = 0.0
+    for entries in _user_costs.values():
+        for entry in entries:
+            if entry["timestamp"].startswith(today):
+                total += entry["cost_usd"]
+    return {
+        "date": today,
+        "total_cost_usd": round(total, 6),
+        "total_users": len(_user_costs),
+    }
+
+@app.get("/analytics/costs/{user_id}")
+async def get_user_costs(user_id: str):
+    """Per-user cost breakdown."""
+    entries = _user_costs.get(user_id, [])
+    today = datetime.now().date().isoformat()
+    today_total = sum(e["cost_usd"] for e in entries if e["timestamp"].startswith(today))
+    return {
+        "user_id": user_id,
+        "total_entries": len(entries),
+        "today_cost_usd": round(today_total, 6),
+        "entries": entries[-100:],  # Return last 100 entries
+    }
 
 
 if __name__ == "__main__":

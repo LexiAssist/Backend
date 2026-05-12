@@ -13,6 +13,7 @@ from groq import Groq
 import os
 
 from database import UserSession, SessionType, get_db
+from job_queue import enqueue_job
 
 router = APIRouter(prefix="/writing", tags=["Writing Assistant"])
 
@@ -148,47 +149,18 @@ async def transcribe(
             detail="No speech detected in this audio chunk.",
         )
 
-    # Stream the raw transcription sentence by sentence for more natural feel
+    # Stream the raw transcription token by token as SSE
     async def stream_tokens():
-        # Send session_id first as proper SSE
-        yield f"event: session_id\ndata: {sid}\n\n"
+        yield f"event: session\n session_id: {sid}\n\n"
 
-        # Split into sentences for more intelligent streaming
-        # This creates a more natural, professional feel than word-by-word
-        import re
-        
-        # Split by sentence boundaries while keeping the punctuation
-        sentences = re.split(r'(?<=[.!?])\s+', raw_text)
-        sentences = [s.strip() for s in sentences if s.strip()]
-        
-        # If there's only one sentence or no clear sentences, fall back to word-by-word
-        if len(sentences) <= 1 and len(raw_text.split()) > 5:
-            # Stream with small phrase chunks (3-4 words at a time) for longer text
-            words = raw_text.split(" ")
-            phrase_buffer = []
-            
-            for i, word in enumerate(words):
-                phrase_buffer.append(word)
-                
-                # Emit every 3 words or at the end
-                if len(phrase_buffer) >= 3 or i == len(words) - 1:
-                    phrase = " ".join(phrase_buffer)
-                    yield f"data: {phrase}\n\n"
-                    phrase_buffer = []
-                    # Small delay between phrases for visual effect
-                    await asyncio.sleep(0.05)
-        else:
-            # Stream sentence by sentence
-            for i, sentence in enumerate(sentences):
-                if i > 0:
-                    sentence = " " + sentence
-                yield f"data: {sentence}\n\n"
-                # Small delay between sentences for visual effect
-                await asyncio.sleep(0.08)
+        # Stream word by word so the UI feels live
+        words = raw_text.split(" ")
+        for i, word in enumerate(words):
+            token = word if i == 0 else f" {word}"
+            yield f"{token} "
 
         yield "data: [DONE]\n\n"
 
-    import asyncio
     return StreamingResponse(stream_tokens(), media_type="text/event-stream")
 
 
@@ -352,3 +324,20 @@ def get_notes_history(
         )
         for r in rows
     ]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Async Job-based Route
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.post("/notes/async")
+async def generate_notes_async(req: NotesRequest):
+    """Enqueue note generation and return a job_id immediately."""
+    if not req.raw_text.strip():
+        raise HTTPException(status_code=422, detail="raw_text cannot be empty.")
+
+    job_id = enqueue_job(
+        "writing_notes",
+        req.model_dump(),
+        req.user_id,
+    )
+    return {"job_id": job_id, "status": "pending"}

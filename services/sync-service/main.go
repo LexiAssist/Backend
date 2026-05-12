@@ -69,7 +69,8 @@ func main() {
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(middleware.Logger())
-	r.Use(middleware.CORS())
+	// CORS is handled by the Gateway - don't set here to avoid duplicate headers
+	// r.Use(middleware.CORS())
 
 	// Register routes
 	h := handlers.NewHandler(db, hub)

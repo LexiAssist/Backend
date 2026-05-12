@@ -72,6 +72,7 @@ func main() {
 	reverseProxy := proxy.NewReverseProxy(
 		cfg.CircuitBreakerThreshold,
 		cfg.CircuitBreakerTimeout,
+		cfg.InternalAPIKey,
 	)
 	
 	// Setup Echo
@@ -87,19 +88,20 @@ func main() {
 	// Correlation ID middleware
 	e.Use(correlationIDMiddleware())
 	
-	// Rate limiting middleware
-	e.Use(middleware.RateLimitMiddleware(&middleware.RateLimitConfig{
+	// Rate limiting middleware (applied to authenticated groups so user_id is available)
+	rateLimiter := middleware.RateLimitMiddleware(&middleware.RateLimitConfig{
 		RedisClient:    redisClient,
 		DefaultRPM:     cfg.RateLimitRPM,
 		AIRPM:          cfg.AIRateLimitRPM,
-		AIPathPrefixes: []string{"/api/v1/ai/"},
-	}))
+		AIDailyQuota:   cfg.AIDailyQuota,
+		AIPathPrefixes: []string{"/api/v1/ai/", "/api/v1/reading/", "/api/v1/study/", "/api/v1/writing/"},
+	})
 	
 	// Logger middleware
 	e.Use(loggerMiddleware())
 	
 	// Register routes
-	gatewayHandler := handler.NewGatewayHandler(cfg, reverseProxy, publicKey)
+	gatewayHandler := handler.NewGatewayHandler(cfg, reverseProxy, publicKey, rateLimiter)
 	gatewayHandler.RegisterRoutes(e)
 	
 	// Start server

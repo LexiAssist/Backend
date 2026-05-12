@@ -3,19 +3,8 @@ package service
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
-	"net/url"
-	"os"
-	"path"
-	"regexp"
-	"strings"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -48,7 +37,6 @@ type ContentService interface {
 	GetCourseMaterials(ctx context.Context, userID uuid.UUID, courseID uuid.UUID) ([]model.Material, error)
 	UpdateMaterial(ctx context.Context, userID uuid.UUID, materialID uuid.UUID, req *UpdateMaterialRequest) (*model.Material, error)
 	DeleteMaterial(ctx context.Context, userID uuid.UUID, materialID uuid.UUID) error
-	GeneratePresignedURL(ctx context.Context, userID uuid.UUID, materialID uuid.UUID, req *PresignRequest) (*PresignResponse, error)
 
 	// Quiz operations
 	CreateQuiz(ctx context.Context, userID uuid.UUID, req *CreateQuizRequest) (*model.Quiz, error)
@@ -198,17 +186,6 @@ type UpdateFlashcardRequest struct {
 	OrderIndex int                   `json:"order_index,omitempty"`
 }
 
-// Presign types
-type PresignRequest struct {
-	Action string `json:"action" validate:"required,oneof=upload download"`
-}
-
-type PresignResponse struct {
-	URL       string    `json:"url"`
-	MaterialID uuid.UUID `json:"material_id"`
-	ExpiresAt int64     `json:"expires_at"`
-}
-
 // ==================== Course Operations ====================
 
 func (s *contentService) CreateCourse(ctx context.Context, userID uuid.UUID, req *CreateCourseRequest) (*model.Course, error) {
@@ -349,241 +326,6 @@ func (s *contentService) DeleteMaterial(ctx context.Context, userID uuid.UUID, m
 		return err
 	}
 	return s.materialRepo.Delete(ctx, materialID)
-}
-
-func (s *contentService) GeneratePresignedURL(ctx context.Context, userID uuid.UUID, materialID uuid.UUID, req *PresignRequest) (*PresignResponse, error) {
-	// Verify material exists and user has access
-	material, err := s.GetMaterial(ctx, userID, materialID)
-	if err != nil {
-		return nil, err
-	}
-
-	// Get MinIO configuration from environment
-	minioEndpoint := os.Getenv("MINIO_ENDPOINT")
-	minioAccessKey := os.Getenv("MINIO_ACCESS_KEY")
-	minioSecretKey := os.Getenv("MINIO_SECRET_KEY")
-	minioBucket := os.Getenv("MINIO_BUCKET")
-
-	if minioEndpoint == "" {
-		minioEndpoint = "minio:9000"
-	}
-	if minioAccessKey == "" {
-		minioAccessKey = "minioadmin"
-	}
-	if minioSecretKey == "" {
-		minioSecretKey = "minioadmin_secret"
-	}
-	if minioBucket == "" {
-		minioBucket = "lexiassist-materials"
-	}
-
-	// Ensure bucket exists before generating presigned URL
-	if err := s.ensureBucketExists(minioEndpoint, minioAccessKey, minioSecretKey, minioBucket); err != nil {
-		return nil, fmt.Errorf("failed to ensure bucket exists: %w", err)
-	}
-
-	// Generate safe object key using material ID and safe filename
-	safeFilename := sanitizeFilename(material.Title)
-	if safeFilename == "" {
-		safeFilename = "file"
-	}
-	objectKey := fmt.Sprintf("materials/%s/%s", materialID.String(), safeFilename)
-
-	// Generate presigned URL for MinIO
-	expiry := 15 * time.Minute
-	presignedURL := s.generateMinIOPresignedURL(minioEndpoint, minioAccessKey, minioSecretKey, minioBucket, objectKey, req.Action, expiry)
-
-	return &PresignResponse{
-		URL:        presignedURL,
-		MaterialID: materialID,
-		ExpiresAt:  time.Now().Add(expiry).Unix(),
-	}, nil
-}
-
-// ensureBucketExists creates the MinIO bucket if it doesn't exist
-func (s *contentService) ensureBucketExists(endpoint, accessKey, secretKey, bucket string) error {
-	// Use internal Docker hostname for bucket operations
-	internalEndpoint := strings.Replace(endpoint, "localhost:9000", "minio:9000", 1)
-	if !strings.HasPrefix(internalEndpoint, "http://") && !strings.HasPrefix(internalEndpoint, "https://") {
-		internalEndpoint = "http://" + internalEndpoint
-	}
-
-	// Build bucket URL
-	bucketURL := fmt.Sprintf("%s/%s", internalEndpoint, bucket)
-
-	// Create bucket using PUT request (MinIO S3 API)
-	req, err := http.NewRequest("PUT", bucketURL, nil)
-	if err != nil {
-		return err
-	}
-
-	// Sign the request
-	now := time.Now().UTC()
-	dateStamp := now.Format("20060102")
-	amzDate := now.Format("20060102T150405Z")
-	region := "us-east-1"
-
-	// Add required headers
-	req.Header.Set("Host", strings.TrimPrefix(internalEndpoint, "http://"))
-	req.Header.Set("X-Amz-Date", amzDate)
-	req.Header.Set("X-Amz-Content-SHA256", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855") // empty body hash
-
-	// Create authorization header
-	credential := fmt.Sprintf("%s/%s/%s/s3/aws4_request", accessKey, dateStamp, region)
-	signedHeaders := "host;x-amz-content-sha256;x-amz-date"
-	
-	// Build canonical request
-	canonicalURI := "/" + bucket
-	canonicalQueryString := ""
-	canonicalHeaders := fmt.Sprintf("host:%s\nx-amz-content-sha256:%s\nx-amz-date:%s\n",
-		req.Header.Get("Host"),
-		req.Header.Get("X-Amz-Content-SHA256"),
-		amzDate)
-	payloadHash := req.Header.Get("X-Amz-Content-SHA256")
-
-	canonicalRequest := fmt.Sprintf("%s\n%s\n%s\n%s\n%s\n%s",
-		"PUT", canonicalURI, canonicalQueryString, canonicalHeaders, signedHeaders, payloadHash)
-
-	// Create string to sign
-	credentialScope := fmt.Sprintf("%s/%s/s3/aws4_request", dateStamp, region)
-	stringToSign := fmt.Sprintf("AWS4-HMAC-SHA256\n%s\n%s\n%s",
-		amzDate, credentialScope, hashSHA256(canonicalRequest))
-
-	// Calculate signature
-	signingKey := getSignatureKey(secretKey, dateStamp, region, "s3")
-	signature := hex.EncodeToString(hmacSHA256(signingKey, stringToSign))
-
-	// Build authorization header
-	authHeader := fmt.Sprintf("AWS4-HMAC-SHA256 Credential=%s, SignedHeaders=%s, Signature=%s",
-		credential, signedHeaders, signature)
-	req.Header.Set("Authorization", authHeader)
-
-	// Make request
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to create bucket: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// Bucket already exists (409 Conflict) or created successfully (200 OK)
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusConflict && resp.StatusCode != http.StatusNoContent {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("failed to create bucket: %s - %s", resp.Status, string(body))
-	}
-
-	return nil
-}
-
-// generateMinIOPresignedURL generates a MinIO-compatible presigned URL
-func (s *contentService) generateMinIOPresignedURL(endpoint, accessKey, secretKey, bucket, objectKey, action string, expiry time.Duration) string {
-	// Use localhost for external access from browser
-	externalEndpoint := strings.Replace(endpoint, "minio:9000", "localhost:9000", 1)
-
-	// Ensure endpoint has scheme
-	if !strings.HasPrefix(externalEndpoint, "http://") && !strings.HasPrefix(externalEndpoint, "https://") {
-		externalEndpoint = "http://" + externalEndpoint
-	}
-
-	now := time.Now().UTC()
-	dateStamp := now.Format("20060102")
-	region := "us-east-1" // MinIO default region
-
-	// Build the URL
-	scheme := "http"
-	if strings.HasPrefix(externalEndpoint, "https://") {
-		scheme = "https"
-	}
-	host := strings.TrimPrefix(externalEndpoint, "http://")
-	host = strings.TrimPrefix(host, "https://")
-
-	// Build canonical request
-	var method string
-	if action == "upload" {
-		method = "PUT"
-	} else {
-		method = "GET"
-	}
-
-	// URL-encode the object key for the canonical URI
-	// Each path segment should be encoded separately
-	objectKeyEncoded := urlEncodePath(objectKey)
-	canonicalURI := "/" + bucket + "/" + objectKeyEncoded
-
-	// Build query parameters
-	queryParams := url.Values{}
-	queryParams.Set("X-Amz-Algorithm", "AWS4-HMAC-SHA256")
-	queryParams.Set("X-Amz-Credential", fmt.Sprintf("%s/%s/%s/s3/aws4_request", accessKey, dateStamp, region))
-	queryParams.Set("X-Amz-Date", now.Format("20060102T150405Z"))
-	queryParams.Set("X-Amz-Expires", fmt.Sprintf("%d", int(expiry.Seconds())))
-	queryParams.Set("X-Amz-SignedHeaders", "host")
-
-	canonicalQueryString := queryParams.Encode()
-	canonicalHeaders := fmt.Sprintf("host:%s\n", host)
-	signedHeaders := "host"
-	payloadHash := "UNSIGNED-PAYLOAD"
-
-	canonicalRequest := fmt.Sprintf("%s\n%s\n%s\n%s\n%s\n%s",
-		method, canonicalURI, canonicalQueryString, canonicalHeaders, signedHeaders, payloadHash)
-
-	// Create string to sign
-	credentialScope := fmt.Sprintf("%s/%s/s3/aws4_request", dateStamp, region)
-	stringToSign := fmt.Sprintf("AWS4-HMAC-SHA256\n%s\n%s\n%s",
-		now.Format("20060102T150405Z"), credentialScope, hashSHA256(canonicalRequest))
-
-	// Calculate signature
-	signingKey := getSignatureKey(secretKey, dateStamp, region, "s3")
-	signature := hex.EncodeToString(hmacSHA256(signingKey, stringToSign))
-
-	// Build final URL - use the same encoded object key
-	finalURL := fmt.Sprintf("%s://%s%s?%s&X-Amz-Signature=%s",
-		scheme, host, canonicalURI, canonicalQueryString, signature)
-
-	return finalURL
-}
-
-// urlEncodePath URL-encodes a path, preserving forward slashes
-func urlEncodePath(path string) string {
-	parts := strings.Split(path, "/")
-	for i, part := range parts {
-		parts[i] = url.PathEscape(part)
-	}
-	return strings.Join(parts, "/")
-}
-
-func hashSHA256(data string) string {
-	hash := sha256.Sum256([]byte(data))
-	return hex.EncodeToString(hash[:])
-}
-
-func hmacSHA256(key []byte, data string) []byte {
-	h := hmac.New(sha256.New, key)
-	h.Write([]byte(data))
-	return h.Sum(nil)
-}
-
-func getSignatureKey(secretKey, dateStamp, region, service string) []byte {
-	kDate := hmacSHA256([]byte("AWS4"+secretKey), dateStamp)
-	kRegion := hmacSHA256(kDate, region)
-	kService := hmacSHA256(kRegion, service)
-	kSigning := hmacSHA256(kService, "aws4_request")
-	return kSigning
-}
-
-// sanitizeFilename removes unsafe characters from filename
-func sanitizeFilename(filename string) string {
-	// Replace spaces with underscores
-	filename = strings.ReplaceAll(filename, " ", "_")
-	// Remove any character that isn't alphanumeric, underscore, hyphen, or dot
-	reg := regexp.MustCompile(`[^a-zA-Z0-9_.-]`)
-	filename = reg.ReplaceAllString(filename, "")
-	// Get basename to avoid path traversal
-	filename = path.Base(filename)
-	// Limit length
-	if len(filename) > 200 {
-		filename = filename[:200]
-	}
-	return filename
 }
 
 // ==================== Quiz Operations ====================

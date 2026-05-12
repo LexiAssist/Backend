@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.24-alpine AS builder
+FROM golang:1.23-alpine AS builder
 
 WORKDIR /app
 
@@ -17,7 +17,7 @@ COPY services/gateway/ ./services/gateway/
 COPY shared/ ./shared/
 
 # Build the application using vendor
-RUN CGO_ENABLED=0 GOOS=linux go build -mod=mod -a -installsuffix cgo -o gateway ./services/gateway/cmd/main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -a -installsuffix cgo -o gateway ./services/gateway/cmd/main.go
 
 # Final stage
 FROM alpine:latest

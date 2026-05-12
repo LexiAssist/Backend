@@ -6,6 +6,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import END, StateGraph
 from dotenv import load_dotenv
+from lexicore import LexiEngine
 
 load_dotenv()  # Load environment variables from .env file
 
@@ -53,10 +54,21 @@ Return ONLY a valid JSON array. Each object must have exactly:
 }
 No markdown fences, no preamble, no trailing text — raw JSON array only.""")
 
+    course_code = state.get("course_code")
+    if course_code:
+        matches = LexiEngine()._retrieve(
+            user_query="key concepts, definitions, and important facts",
+            course_code=course_code,
+            top_k=8
+        )
+        context_text = "\n\n".join(m["text"] for m in matches) if matches else state["document_text"][:8000]
+    else:
+        context_text = state["document_text"][:8000]
+
     human = HumanMessage(content=f"""Generate exactly {state['num_cards']} flashcards from the following notes.
 Every flashcard must come strictly from this text:
 
-{state['document_text']}""")
+{context_text}""")
 
     response = llm.invoke([system, human])
 

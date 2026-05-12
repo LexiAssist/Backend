@@ -51,27 +51,20 @@ func CORSMiddleware(config *CORSConfig) echo.MiddlewareFunc {
 			allowOrigin := ""
 			for _, allowed := range config.AllowedOrigins {
 				if allowed == "*" {
+					// When credentials are used, return the actual origin instead of wildcard
 					allowOrigin = origin
 					break
 				}
-				if strings.EqualFold(allowed, origin) {
+				if allowed == origin {
 					allowOrigin = origin
 					break
-				}
-			}
-			
-			// If no specific match, use the first allowed origin or allow all
-			if allowOrigin == "" {
-				if len(config.AllowedOrigins) > 0 && config.AllowedOrigins[0] != "*" {
-					allowOrigin = config.AllowedOrigins[0]
-				} else {
-					allowOrigin = origin
 				}
 			}
 			
 			// Set CORS headers
 			if allowOrigin != "" {
 				c.Response().Header().Set("Access-Control-Allow-Origin", allowOrigin)
+				c.Response().Header().Set("Vary", "Origin")
 			}
 			
 			c.Response().Header().Set("Access-Control-Allow-Methods", strings.Join(config.AllowedMethods, ", "))

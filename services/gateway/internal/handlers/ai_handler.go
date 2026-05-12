@@ -2,11 +2,9 @@
 package handlers
 
 import (
-	"context"
 	"io"
 	"net/http"
 	"strconv"
-	"time"
 
 	"github.com/labstack/echo/v4"
 	"go.uber.org/zap"
@@ -203,12 +201,7 @@ func (h *AIHandler) AnalyzeDocument(c echo.Context) error {
 		voice = "Zephyr"
 	}
 
-	// Create a context with 5-minute timeout for document analysis
-	// This prevents the request from being canceled by the client timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-
-	resp, err := h.aiClient.AnalyzeDocument(ctx, file, header.Filename, userID, summaryType, voice)
+	resp, err := h.aiClient.AnalyzeDocument(c.Request().Context(), file, header.Filename, userID, summaryType, voice)
 	if err != nil {
 		h.logger.Error("document analysis failed", zap.Error(err))
 		return echo.NewHTTPError(http.StatusInternalServerError, "document analysis failed")
@@ -411,111 +404,4 @@ func (h *AIHandler) GetNotesHistory(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, history)
-}
-
-
-// ==================== ASYNC READING ASSISTANT ====================
-
-// StartAsyncAnalysis starts an async document analysis and returns immediately with job_id.
-// POST /api/reading/analyze/async -> AI POST /reading/analyse/async
-func (h *AIHandler) StartAsyncAnalysis(c echo.Context) error {
-	userID := h.getUserID(c)
-	if userID == "" {
-		return echo.NewHTTPError(http.StatusUnauthorized, "missing user ID")
-	}
-
-	// Parse multipart form (32MB max)
-	if err := c.Request().ParseMultipartForm(32 << 20); err != nil {
-		h.logger.Warn("failed to parse multipart form", zap.Error(err))
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid multipart form")
-	}
-
-	// Get file
-	file, header, err := c.Request().FormFile("file")
-	if err != nil {
-		h.logger.Warn("missing file", zap.Error(err))
-		return echo.NewHTTPError(http.StatusBadRequest, "missing file")
-	}
-	defer file.Close()
-
-	// Get options
-	summaryType := c.FormValue("summary_type")
-	if summaryType == "" {
-		summaryType = "concise"
-	}
-	voice := c.FormValue("voice")
-	if voice == "" {
-		voice = "Zephyr"
-	}
-
-	// Start async analysis - returns immediately with job_id
-	resp, err := h.aiClient.StartAsyncAnalysis(c.Request().Context(), file, header.Filename, userID, summaryType, voice)
-	if err != nil {
-		h.logger.Error("failed to start async analysis", zap.Error(err))
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to start analysis")
-	}
-
-	return c.JSON(http.StatusOK, resp)
-}
-
-// GetAnalysisStatus retrieves the status of an async analysis job.
-// GET /api/reading/analyze/status/:job_id?user_id=xxx -> AI GET /reading/analyse/status/:job_id?user_id=xxx
-func (h *AIHandler) GetAnalysisStatus(c echo.Context) error {
-	userID := h.getUserID(c)
-	if userID == "" {
-		return echo.NewHTTPError(http.StatusUnauthorized, "missing user ID")
-	}
-
-	jobID := c.Param("job_id")
-	if jobID == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "missing job ID")
-	}
-
-	status, err := h.aiClient.GetAnalysisStatus(c.Request().Context(), jobID, userID)
-	if err != nil {
-		if err.Error() == "job not found" {
-			return echo.NewHTTPError(http.StatusNotFound, "job not found")
-		}
-		h.logger.Error("failed to get analysis status", zap.Error(err))
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to get analysis status")
-	}
-
-	return c.JSON(http.StatusOK, status)
-}
-
-
-// SimplifyRequest represents the text simplification request.
-type SimplifyRequest struct {
-	Text  string `json:"text" validate:"required"`
-	Level string `json:"level" validate:"required,oneof=beginner intermediate"`
-}
-
-// SimplifyText simplifies text to a specific reading level.
-// POST /api/reading/simplify -> AI POST /reading/simplify
-func (h *AIHandler) SimplifyText(c echo.Context) error {
-	userID := h.getUserID(c)
-	if userID == "" {
-		return echo.NewHTTPError(http.StatusUnauthorized, "missing user ID")
-	}
-
-	var req SimplifyRequest
-	if err := c.Bind(&req); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
-	}
-
-	if req.Text == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "missing text")
-	}
-
-	if req.Level == "" {
-		req.Level = "intermediate"
-	}
-
-	resp, err := h.aiClient.SimplifyText(c.Request().Context(), req.Text, req.Level, userID)
-	if err != nil {
-		h.logger.Error("text simplification failed", zap.Error(err))
-		return echo.NewHTTPError(http.StatusInternalServerError, "text simplification failed")
-	}
-
-	return c.JSON(http.StatusOK, resp)
 }

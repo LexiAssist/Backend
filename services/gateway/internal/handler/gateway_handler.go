@@ -21,10 +21,11 @@ type GatewayHandler struct {
 	proxy         *proxy.ReverseProxy
 	jwtValidator  *middleware.JWTValidator
 	aiHandler     *handlers.AIHandler
+	rateLimiter   echo.MiddlewareFunc
 }
 
 // NewGatewayHandler creates a new gateway handler.
-func NewGatewayHandler(cfg *config.Config, p *proxy.ReverseProxy, publicKey *rsa.PublicKey) *GatewayHandler {
+func NewGatewayHandler(cfg *config.Config, p *proxy.ReverseProxy, publicKey *rsa.PublicKey, rateLimiter echo.MiddlewareFunc) *GatewayHandler {
 	// Initialize AI client
 	aiClient := clients.NewAIClient(cfg)
 	
@@ -33,6 +34,7 @@ func NewGatewayHandler(cfg *config.Config, p *proxy.ReverseProxy, publicKey *rsa
 		proxy:        p,
 		jwtValidator: middleware.NewJWTValidator(publicKey),
 		aiHandler:    handlers.NewAIHandler(aiClient),
+		rateLimiter:  rateLimiter,
 	}
 }
 
@@ -61,6 +63,7 @@ func (h *GatewayHandler) RegisterRoutes(e *echo.Echo) {
 		h.jwtValidator,
 		middleware.PublicKeySkipper([]string{"/api/v1/auth/"}),
 	))
+	protected.Use(h.rateLimiter)
 	{
 		// User Service
 		protected.POST("/auth/logout", h.ProxyToUserService)
@@ -120,12 +123,8 @@ func (h *GatewayHandler) RegisterRoutes(e *echo.Echo) {
 		protected.POST("/ai/generate/summary", h.ProxyToAIOrchestrator)
 		protected.POST("/ai/generate/flashcards", h.ProxyToAIOrchestrator)
 		protected.POST("/ai/chat", h.ProxyToAIOrchestrator)
-		protected.POST("/ai/chat/stream", h.ProxyToAIOrchestrator)
 		protected.GET("/ai/conversation/:id", h.ProxyToAIOrchestrator)
 		protected.DELETE("/ai/conversation/:id", h.ProxyToAIOrchestrator)
-		
-		// Retrieval Service (RAG)
-		protected.POST("/ai/retrieve", h.ProxyToRetrievalService)
 		
 		// AI Monolith Service (port 8000) - Writing Assistant
 		protected.POST("/writing/transcribe", h.aiHandler.Transcribe)
@@ -135,9 +134,6 @@ func (h *GatewayHandler) RegisterRoutes(e *echo.Echo) {
 		
 		// AI Monolith Service - Reading Assistant
 		protected.POST("/reading/analyse", h.aiHandler.AnalyzeDocument)
-		protected.POST("/reading/analyse/async", h.aiHandler.StartAsyncAnalysis)
-		protected.GET("/reading/analyse/status/:job_id", h.aiHandler.GetAnalysisStatus)
-		protected.POST("/reading/simplify", h.aiHandler.SimplifyText)
 		protected.GET("/reading/:id", h.aiHandler.GetReadingSession)
 		
 		// AI Monolith Service - Study Assistant
@@ -152,8 +148,8 @@ func (h *GatewayHandler) RegisterRoutes(e *echo.Echo) {
 		
 		// Audio Service
 		protected.POST("/ai/speech-to-text", h.ProxyToAudioService)
-		protected.GET("/ai/languages", h.ProxyToAudioService)
 		protected.POST("/ai/text-to-speech", h.ProxyToAudioService)
+		protected.GET("/ai/languages", h.ProxyToAudioService)
 		
 		// Notification Service
 		protected.GET("/notifications/preferences", h.ProxyToNotificationService)
@@ -176,9 +172,16 @@ func (h *GatewayHandler) RegisterRoutes(e *echo.Echo) {
 	}
 	
 	// WebSocket endpoint (handled separately for upgrade support)
-	// Note: WebSocket auth is handled via query param token, not Authorization header
-	// because browsers can't set custom headers during WebSocket handshake
-	e.GET("/api/v1/ws", h.ProxyWebSocketToSyncService)
+	ws := e.Group("/api/v1")
+	ws.Use(middleware.JWTMiddleware(
+		h.jwtValidator,
+		middleware.PublicKeySkipper([]string{}),
+	))
+	ws.Use(h.rateLimiter)
+	{
+		// WebSocket upgrade endpoint for sync service
+		ws.GET("/ws", h.ProxyWebSocketToSyncService)
+	}
 }
 
 // HealthCheck handles health check requests.
@@ -264,18 +267,6 @@ func (h *GatewayHandler) ProxyToAudioService(c echo.Context) error {
 // ProxyWebSocketToSyncService proxies WebSocket connections to Sync Service.
 func (h *GatewayHandler) ProxyWebSocketToSyncService(c echo.Context) error {
 	targetURL := h.config.SyncServiceURL
-	
-	// For WebSocket connections, token is passed as query param since browsers
-	// can't set custom headers during WebSocket handshake
-	token := c.QueryParam("token")
-	if token != "" {
-		// Validate token and set user_id header for downstream service
-		claims, err := h.jwtValidator.Validate(token)
-		if err == nil {
-			c.Request().Header.Set("X-User-ID", claims.UserID)
-		}
-	}
-	
 	// WebSocket upgrade is handled by the sync service
 	return h.proxy.ProxyRequest(c, targetURL+"/api/v1/sync", "sync", true)
 }

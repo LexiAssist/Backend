@@ -36,6 +36,7 @@ var (
 type Claims struct {
 	UserID    string `json:"user_id"`
 	Email     string `json:"email"`
+	Role      string `json:"role"`
 	TokenType string `json:"token_type"`
 	jwt.RegisteredClaims
 }
@@ -73,13 +74,14 @@ func NewJWTManagerWithPublicKeyOnly(publicKey *rsa.PublicKey) *JWTManager {
 }
 
 // GenerateTokenPair generates a new access and refresh token pair.
-func (m *JWTManager) GenerateTokenPair(userID, email string, accessTTL, refreshTTL time.Duration) (*TokenPair, error) {
+func (m *JWTManager) GenerateTokenPair(userID, email, role string, accessTTL, refreshTTL time.Duration) (*TokenPair, error) {
 	now := time.Now()
 
 	// Generate access token
 	accessClaims := Claims{
 		UserID:    userID,
 		Email:     email,
+		Role:      role,
 		TokenType: "access",
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(now.Add(accessTTL)),

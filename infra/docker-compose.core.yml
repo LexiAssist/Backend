@@ -1,0 +1,66 @@
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: lexiassist-postgres
+    environment:
+      POSTGRES_USER: lexiassist
+      POSTGRES_PASSWORD: lexiassist_secret
+      POSTGRES_DB: lexiassist
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lexiassist"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - lexiassist-network
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: lexiassist-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - lexiassist-network
+
+  # MinIO Object Storage
+  minio:
+    image: minio/minio:latest
+    container_name: lexiassist-minio
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin_secret
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      - lexiassist-network
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+
+networks:
+  lexiassist-network:
+    driver: bridge

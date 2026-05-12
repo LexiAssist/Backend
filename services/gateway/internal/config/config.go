@@ -20,6 +20,7 @@ type Config struct {
 	// Rate Limiting
 	RateLimitRPM            int
 	AIRateLimitRPM          int
+	AIDailyQuota            int
 	
 	// Circuit Breaker
 	CircuitBreakerThreshold int
@@ -57,7 +58,8 @@ func Load() (*Config, error) {
 		LogLevel:                getEnv("LOG_LEVEL", "info"),
 		RedisURL:                getEnv("REDIS_URL", "localhost:6379"),
 		RateLimitRPM:            getEnvInt("RATE_LIMIT_RPM", 100),
-		AIRateLimitRPM:          getEnvInt("AI_RATE_LIMIT_RPM", 20),
+		AIRateLimitRPM:          getEnvInt("AI_RATE_LIMIT_RPM", 100),	// Increased from 20 for development
+		AIDailyQuota:            getEnvInt("AI_DAILY_QUOTA", 50),
 		CircuitBreakerThreshold: getEnvInt("CIRCUIT_BREAKER_THRESHOLD", 3),
 		CircuitBreakerTimeout:   getEnvDuration("CIRCUIT_BREAKER_TIMEOUT", 60*time.Second),
 		AllowedOrigins:          getEnvSlice("ALLOWED_ORIGINS", []string{"http://localhost:3000"}),

@@ -125,7 +125,8 @@ func main() {
 	e.Use(echomiddleware.Logger())
 	e.Use(correlationIDMiddleware())
 	e.Use(loggerMiddleware())
-	e.Use(corsMiddleware())
+	// CORS is handled by the Gateway - don't set here to avoid duplicate headers
+	// e.Use(corsMiddleware())
 
 	// Setup routes
 	setupRoutes(e, authHandler, userHandler, sessionHandler)

@@ -80,11 +80,12 @@ func main() {
 
 	// Middleware
 	e.Use(middleware.Recover())
-	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
-		AllowOrigins: []string{"*"},
-		AllowMethods: []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodOptions},
-		AllowHeaders: []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept, echo.HeaderAuthorization, "X-User-ID", "X-Correlation-ID"},
-	}))
+	// CORS is handled by the Gateway - don't set here to avoid duplicate headers
+	// e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+	// 	AllowOrigins: []string{"*"},
+	// 	AllowMethods: []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodOptions},
+	// 	AllowHeaders: []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept, echo.HeaderAuthorization, "X-User-ID", "X-Correlation-ID"},
+	// }))
 	e.Use(loggerMiddleware)
 	e.Use(correlationIDMiddleware)
 
@@ -110,7 +111,6 @@ func main() {
 		api.GET("/materials/:id", materialHandler.GetMaterial)
 		api.PUT("/materials/:id", materialHandler.UpdateMaterial)
 		api.DELETE("/materials/:id", materialHandler.DeleteMaterial)
-		api.POST("/materials/:id/presign", materialHandler.GeneratePresignedURL)
 
 		// Quizzes
 		api.POST("/quizzes", quizHandler.CreateQuiz)

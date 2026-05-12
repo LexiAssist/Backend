@@ -17,13 +17,14 @@ ENV PYTHONUNBUFFERED=1
 
 # Copy requirements
 COPY requirements-final.txt .
-RUN pip install --upgrade pip
 RUN pip install --timeout 600 --retries 10 --no-cache-dir -r requirements-final.txt
 
 # Copy service code
 COPY services/evaluation/main.py .
 COPY services/evaluation/database.py .
 
+# Create data directory for JSON persistence
+RUN mkdir -p data
 
 ENV PORT=5006
 

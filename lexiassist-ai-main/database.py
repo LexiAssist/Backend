@@ -1,15 +1,15 @@
 # database.py
 import enum
 import os
-from datetime import datetime, timezone
+from datetime import datetime
 from dotenv import load_dotenv
+
 
 from sqlalchemy import (
     Column, DateTime, Enum as SAEnum,
-    Integer, JSON, String, Text, create_engine, text,
+    Integer, JSON, String, Text, create_engine,
 )
 from sqlalchemy.orm import declarative_base, sessionmaker
-
 load_dotenv()  # Load environment variables from .env file
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://lexiassist:lexiassist_secret@localhost:5432/lexiassist")
 
@@ -46,7 +46,7 @@ class UserSession(Base):
     user_id              = Column(String,          nullable=False, index=True)
     session_type         = Column(SAEnum(SessionType), nullable=False)
     filename             = Column(String,          nullable=True)
-    created_at           = Column(DateTime,        default=lambda: datetime.now(timezone.utc))
+    created_at           = Column(DateTime,        default=datetime.utcnow)
 
     # ── Writing assistant (notes) ──────────────────────────────────────────
     subject              = Column(String,          nullable=True)
@@ -69,31 +69,13 @@ class UserSession(Base):
     num_questions        = Column(Integer,         nullable=True)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Database initialization — called at startup, NOT at import time
-# ─────────────────────────────────────────────────────────────────────────────
+# Ensure the 'ai' schema exists before creating tables
+from sqlalchemy import text
+with engine.connect() as conn:
+    conn.execute(text("CREATE SCHEMA IF NOT EXISTS ai"))
+    conn.commit()
 
-_db_initialized = False
-
-def init_db():
-    """
-    Create the 'ai' schema and tables. Called once at application startup.
-    Safe to call multiple times (idempotent).
-    """
-    global _db_initialized
-    if _db_initialized:
-        return
-
-    try:
-        with engine.connect() as conn:
-            conn.execute(text("CREATE SCHEMA IF NOT EXISTS ai"))
-            conn.commit()
-        Base.metadata.create_all(bind=engine)
-        _db_initialized = True
-        print("✅ Database schema and tables initialized")
-    except Exception as e:
-        print(f"⚠️  Database initialization failed: {e}")
-        print("   The service will start, but DB-dependent features may not work.")
+Base.metadata.create_all(bind=engine)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

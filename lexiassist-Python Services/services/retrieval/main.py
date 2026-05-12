@@ -1,11 +1,11 @@
 import os
 os.environ["TRANSFORMERS_NO_TF"] = "1"
 
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, HTTPException, Depends, Header, Request
 from pydantic import BaseModel, Field
 from typing import List, Optional
 from database import search_similar_chunks, get_search_mode
+import os
 import uvicorn
 
 # Import the same embedding model used in Ingestion
@@ -14,20 +14,20 @@ from sentence_transformers import SentenceTransformer
 embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
 print("✅ Embedding model loaded (all-MiniLM-L6-v2, 384 dimensions)")
 
+
+def verify_internal_key(request: Request, x_internal_key: str = Header(None)):
+    if request.url.path in ("/", "/health"):
+        return
+    expected = os.getenv("INTERNAL_API_KEY", "dev-internal-key-change-in-production")
+    if not x_internal_key or x_internal_key != expected:
+        raise HTTPException(status_code=403, detail="Invalid or missing internal key")
+
+
 app = FastAPI(
     title="LexiAssist Retrieval Service",
-    description="Semantic search & vector retrieval for RAG via PostgreSQL + pgvector",
-    version="3.0.0"
-)
-
-# CORS
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    description="Semantic search & vector retrieval for RAG",
+    version="2.1.0",
+    dependencies=[Depends(verify_internal_key)],
 )
 
 # Pydantic models
@@ -68,10 +68,12 @@ async def root():
 
 @app.get("/health")
 async def health():
+    search_mode = get_search_mode()
     return {
         "status": "ok",
         "model_loaded": True,
-        "search_mode": "postgresql+pgvector",
+        "search_mode": search_mode,
+        "cache": "disabled (waiting for redis)"
     }
 
 def generate_query_embedding(query: str) -> List[float]:
@@ -90,7 +92,7 @@ async def retrieve_context(request: RetrieveRequest):
     Main RAG retrieval endpoint.
     
     1. Generates a real embedding from the user's query
-    2. Searches for similar document chunks via pgvector cosine distance
+    2. Searches for similar document chunks (pgvector or JSON fallback)
     3. Returns top-k most relevant chunks for the Orchestrator to use
     """
     try:

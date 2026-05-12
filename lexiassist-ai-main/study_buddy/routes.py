@@ -10,6 +10,31 @@ from sqlalchemy.orm import Session
 from database import UserSession, SessionType, get_db
 from study_buddy.flashcards import flashcard_graph
 from study_buddy.quizzes import quiz_graph
+from job_queue import enqueue_job
+from shared.ai_cache import ai_cache
+
+
+# ─── Cached graph invocations (Redis dedup, 24h TTL) ────────────────────────
+
+@ai_cache("flashcards", ttl=86400)
+def _generate_flashcards_cached(document_text: str, num_cards: int):
+    """Deterministic wrapper so cache key is stable (no random IDs in state)."""
+    return flashcard_graph.invoke({
+        "document_text": document_text,
+        "num_cards": num_cards,
+        "flashcards": [],
+    })
+
+
+@ai_cache("quizzes", ttl=86400)
+def _generate_quiz_cached(document_text: str, quiz_type: str, num_questions: int):
+    """Deterministic wrapper so cache key is stable (no random IDs in state)."""
+    return quiz_graph.invoke({
+        "document_text": document_text,
+        "quiz_type": quiz_type,
+        "num_questions": num_questions,
+        "questions": [],
+    })
 
 router = APIRouter(prefix="/study", tags=["Study Tools"])
 
@@ -154,11 +179,7 @@ async def generate_flashcards(
 
     session_id = str(uuid.uuid4())
 
-    result = flashcard_graph.invoke({
-        "document_text": document_text,
-        "num_cards":     num_cards,
-        "flashcards":    [],
-    })
+    result = _generate_flashcards_cached(document_text, num_cards)
 
     cards_raw = result.get("flashcards", [])
     cards = [Flashcard(**c) for c in cards_raw]
@@ -245,12 +266,7 @@ async def generate_quiz(
 
     session_id = str(uuid.uuid4())
 
-    result = quiz_graph.invoke({
-        "document_text": document_text,
-        "quiz_type":     quiz_type,
-        "num_questions": num_questions,
-        "questions":     [],
-    })
+    result = _generate_quiz_cached(document_text, quiz_type, num_questions)
 
     questions_raw = result.get("questions", [])
 
@@ -364,3 +380,55 @@ def get_study_history(
         )
         for r in rows
     ]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Async Job-based Routes
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.post("/flashcards/async")
+async def generate_flashcards_async(
+    file: UploadFile = File(..., description="Notes or textbook (.pdf, .txt, .docx)"),
+    user_id: str = Form(..., description="ID of the authenticated user"),
+    num_cards: int = Form(10, ge=1, le=50, description="Number of flashcards to generate (1–50)"),
+):
+    """Enqueue flashcard generation and return a job_id immediately."""
+    document_text = await extract_text(file)
+    if not document_text.strip():
+        raise HTTPException(status_code=422, detail="No text could be extracted from the file.")
+
+    job_id = enqueue_job(
+        "study_flashcards",
+        {
+            "document_text": document_text,
+            "num_cards": num_cards,
+            "filename": file.filename,
+        },
+        user_id,
+    )
+    return {"job_id": job_id, "status": "pending"}
+
+
+@router.post("/quiz/async")
+async def generate_quiz_async(
+    file: UploadFile = File(..., description="Notes or textbook (.pdf, .txt, .docx)"),
+    user_id: str = Form(..., description="ID of the authenticated user"),
+    quiz_type: Literal["multiple_choice", "theory"] = Form(...),
+    num_questions: int = Form(5, ge=1, le=30),
+):
+    """Enqueue quiz generation and return a job_id immediately."""
+    document_text = await extract_text(file)
+    if not document_text.strip():
+        raise HTTPException(status_code=422, detail="No text could be extracted from the file.")
+
+    job_id = enqueue_job(
+        "study_quiz",
+        {
+            "document_text": document_text,
+            "quiz_type": quiz_type,
+            "num_questions": num_questions,
+            "filename": file.filename,
+        },
+        user_id,
+    )
+    return {"job_id": job_id, "status": "pending"}

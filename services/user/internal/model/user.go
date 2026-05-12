@@ -26,6 +26,7 @@ type User struct {
 	VerificationCode     string         `gorm:"type:varchar(10)" json:"-"`
 	VerificationCodeExpiresAt *time.Time `json:"-"`
 	IsActive             bool           `gorm:"default:true" json:"is_active"`
+	Role                 string         `gorm:"type:varchar(20);default:'student'" json:"role"`
 	CreatedAt            time.Time      `json:"created_at"`
 	UpdatedAt            time.Time      `json:"updated_at"`
 	DeletedAt            gorm.DeletedAt `gorm:"index" json:"-"`
@@ -33,6 +34,24 @@ type User struct {
 	// Associations
 	Sessions      []UserSession   `json:"sessions,omitempty"`
 	RefreshTokens []RefreshToken  `json:"-"`
+}
+
+// Role constants for user roles
+const (
+	RoleStudent    = "student"
+	RoleInstructor = "instructor"
+	RoleAdmin      = "admin"
+	RoleSuperAdmin = "super_admin"
+)
+
+// IsAdmin returns true if user has admin or super_admin role
+func (u *User) IsAdmin() bool {
+	return u.Role == RoleAdmin || u.Role == RoleSuperAdmin
+}
+
+// IsSuperAdmin returns true if user has super_admin role
+func (u *User) IsSuperAdmin() bool {
+	return u.Role == RoleSuperAdmin
 }
 
 // TableName specifies the table name for User.
