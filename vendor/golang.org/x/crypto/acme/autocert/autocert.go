@@ -134,8 +134,7 @@ type Manager struct {
 	// RenewBefore optionally specifies how early certificates should
 	// be renewed before they expire.
 	//
-	// If zero, they're renewed at the lesser of 30 days or
-	// 1/3 of the certificate lifetime.
+	// If zero, they're renewed 30 days before expiration.
 	RenewBefore time.Duration
 
 	// Client is used to perform low-level operations, such as account registration
@@ -293,10 +292,6 @@ func (m *Manager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, 
 	}
 
 	// regular domain
-	if err := m.hostPolicy()(ctx, name); err != nil {
-		return nil, err
-	}
-
 	ck := certKey{
 		domain: strings.TrimSuffix(name, "."), // golang.org/issue/18114
 		isRSA:  !supportsECDSA(hello),
@@ -310,6 +305,9 @@ func (m *Manager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, 
 	}
 
 	// first-time
+	if err := m.hostPolicy()(ctx, name); err != nil {
+		return nil, err
+	}
 	cert, err = m.createCert(ctx, ck)
 	if err != nil {
 		return nil, err
@@ -465,7 +463,7 @@ func (m *Manager) cert(ctx context.Context, ck certKey) (*tls.Certificate, error
 		leaf: cert.Leaf,
 	}
 	m.state[ck] = s
-	m.startRenew(ck, s.key, s.leaf.NotBefore, s.leaf.NotAfter)
+	m.startRenew(ck, s.key, s.leaf.NotAfter)
 	return cert, nil
 }
 
@@ -611,7 +609,7 @@ func (m *Manager) createCert(ctx context.Context, ck certKey) (*tls.Certificate,
 	}
 	state.cert = der
 	state.leaf = leaf
-	m.startRenew(ck, state.key, state.leaf.NotBefore, state.leaf.NotAfter)
+	m.startRenew(ck, state.key, state.leaf.NotAfter)
 	return state.tlscert()
 }
 
@@ -909,7 +907,7 @@ func httpTokenCacheKey(tokenPath string) string {
 //
 // The key argument is a certificate private key.
 // The exp argument is the cert expiration time (NotAfter).
-func (m *Manager) startRenew(ck certKey, key crypto.Signer, notBefore, notAfter time.Time) {
+func (m *Manager) startRenew(ck certKey, key crypto.Signer, exp time.Time) {
 	m.renewalMu.Lock()
 	defer m.renewalMu.Unlock()
 	if m.renewal[ck] != nil {
@@ -921,7 +919,7 @@ func (m *Manager) startRenew(ck certKey, key crypto.Signer, notBefore, notAfter 
 	}
 	dr := &domainRenewal{m: m, ck: ck, key: key}
 	m.renewal[ck] = dr
-	dr.start(notBefore, notAfter)
+	dr.start(exp)
 }
 
 // stopRenew stops all currently running cert renewal timers.
@@ -1027,6 +1025,13 @@ func (m *Manager) hostPolicy() HostPolicy {
 		return m.HostPolicy
 	}
 	return defaultHostPolicy
+}
+
+func (m *Manager) renewBefore() time.Duration {
+	if m.RenewBefore > renewJitter {
+		return m.RenewBefore
+	}
+	return 720 * time.Hour // 30 days
 }
 
 func (m *Manager) now() time.Time {
