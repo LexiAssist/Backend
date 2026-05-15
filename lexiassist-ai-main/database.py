@@ -7,9 +7,10 @@ from dotenv import load_dotenv
 
 from sqlalchemy import (
     Column, DateTime, Enum as SAEnum,
-    Integer, JSON, String, Text, create_engine,
+    Integer, JSON, String, Text, create_engine, text,
 )
 from sqlalchemy.orm import declarative_base, sessionmaker
+
 load_dotenv()  # Load environment variables from .env file
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://lexiassist:lexiassist_secret@localhost:5432/lexiassist")
 
@@ -18,9 +19,9 @@ SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 Base         = declarative_base()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────
 # Enums
-# ─────────────────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────
 
 class SessionType(str, enum.Enum):
     notes     = "notes"       # writing assistant
@@ -29,9 +30,9 @@ class SessionType(str, enum.Enum):
     quiz      = "quiz"        # study tools
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────
 # Model
-# ─────────────────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────
 
 class UserSession(Base):
     """
@@ -69,18 +70,28 @@ class UserSession(Base):
     num_questions        = Column(Integer,         nullable=True)
 
 
-# Ensure the 'ai' schema exists before creating tables
-from sqlalchemy import text
-with engine.connect() as conn:
-    conn.execute(text("CREATE SCHEMA IF NOT EXISTS ai"))
-    conn.commit()
+# ──────────────────────────────────────────────────────────────────
+# Database Initialization
+# ──────────────────────────────────────────────────────────────────
 
-Base.metadata.create_all(bind=engine)
+def init_db():
+    """
+    Initialize the database by creating the 'ai' schema and all tables.
+    Call this once at application startup or via CLI.
+    """
+    # Create schema if it doesn't exist
+    with engine.connect() as conn:
+        conn.execute(text("CREATE SCHEMA IF NOT EXISTS ai"))
+        conn.commit()
+    
+    # Create all tables defined in Base.metadata
+    Base.metadata.create_all(bind=engine)
+    print("Database initialized successfully")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────
 # FastAPI dependency
-# ─────────────────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────
 
 def get_db():
     db = SessionLocal()
