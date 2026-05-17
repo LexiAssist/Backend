@@ -6,21 +6,10 @@ on:
       - main
 
 jobs:
-  build-and-deploy:
+  deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build all images
-        run: |
-          cd infra
-          docker compose -f docker-compose.yml -f docker-compose.staging.yml build
-
       - name: Deploy to staging server
         uses: appleboy/ssh-action@v1.0.3
         with:
