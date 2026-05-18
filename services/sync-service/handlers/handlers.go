@@ -99,7 +99,7 @@ func (h *Handler) GetPresence(c *gin.Context) {
 
 	var presence models.Presence
 	err = h.db.Get(&presence, `
-		SELECT * FROM sync.presence 
+		SELECT * FROM lexi_sync.presence 
 		WHERE user_id = $1`, uid)
 
 	if err != nil {
@@ -138,12 +138,12 @@ func (h *Handler) UpdatePresence(c *gin.Context) {
 	// Get current connection count
 	var connCount int
 	h.db.Get(&connCount, `
-		SELECT COALESCE(active_connections, 0) FROM sync.presence 
+		SELECT COALESCE(active_connections, 0) FROM lexi_sync.presence 
 		WHERE user_id = $1`, uid)
 
 	// Build query
 	query := `
-		INSERT INTO sync.presence 
+		INSERT INTO lexi_sync.presence 
 		(user_id, status, status_message, last_activity_type, last_activity_data, active_connections, last_seen_at)
 		VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)
 		ON CONFLICT (user_id) 
@@ -183,7 +183,7 @@ func (h *Handler) GetOnlineUsers(c *gin.Context) {
 	}
 
 	err := h.db.Select(&users, `
-		SELECT * FROM sync.online_users`)
+		SELECT * FROM lexi_sync.online_users`)
 
 	if err != nil {
 		logger.Error(fmt.Sprintf("Failed to get online users: %v", err))
@@ -224,7 +224,7 @@ func (h *Handler) GetSyncState(c *gin.Context) {
 
 	var state models.DeviceState
 	err = h.db.Get(&state, `
-		SELECT * FROM sync.device_state 
+		SELECT * FROM lexi_sync.device_state 
 		WHERE user_id = $1 AND device_id = $2`, uid, deviceID)
 
 	if err != nil {
@@ -266,7 +266,7 @@ func (h *Handler) AckSync(c *gin.Context) {
 
 	now := time.Now()
 	_, err = h.db.Exec(`
-		INSERT INTO sync.device_state 
+		INSERT INTO lexi_sync.device_state 
 		(user_id, device_id, last_event_id, last_event_timestamp, sync_cursor, is_syncing, last_sync_at)
 		VALUES ($1, $2, $3, $4, $5, false, $6)
 		ON CONFLICT (user_id, device_id) 
@@ -316,14 +316,14 @@ func (h *Handler) GetEvents(c *gin.Context) {
 			return
 		}
 		dbErr = h.db.Select(&events, `
-			SELECT * FROM sync.events 
+			SELECT * FROM lexi_sync.events 
 			WHERE (user_id = $1 OR user_id IS NULL)
 			AND created_at > $2
 			ORDER BY created_at ASC
 			LIMIT $3`, uid, sinceTime, limit)
 	} else {
 		dbErr = h.db.Select(&events, `
-			SELECT * FROM sync.events 
+			SELECT * FROM lexi_sync.events 
 			WHERE (user_id = $1 OR user_id IS NULL)
 			ORDER BY created_at DESC
 			LIMIT $2`, uid, limit)
@@ -377,7 +377,7 @@ func (h *Handler) CreateEvent(c *gin.Context) {
 	}
 
 	_, err = h.db.NamedExec(`
-		INSERT INTO sync.events 
+		INSERT INTO lexi_sync.events 
 		(event_type, event_name, user_id, course_id, payload, source_service)
 		VALUES (:event_type, :event_name, :user_id, :course_id, :payload, :source_service)`,
 		event)
@@ -418,7 +418,7 @@ func (h *Handler) BroadcastEvent(c *gin.Context) {
 	}
 
 	_, err := h.db.NamedExec(`
-		INSERT INTO sync.events 
+		INSERT INTO lexi_sync.events 
 		(event_type, event_name, user_id, payload, source_service, is_broadcast)
 		VALUES (:event_type, :event_name, :user_id, :payload, :source_service, :is_broadcast)`,
 		event)
@@ -464,7 +464,7 @@ func (h *Handler) RecordChange(c *gin.Context) {
 	}
 
 	_, err := h.db.NamedExec(`
-		INSERT INTO sync.change_log 
+		INSERT INTO lexi_sync.change_log 
 		(table_name, operation, record_id, user_id, old_data, new_data)
 		VALUES (:table_name, :operation, :record_id, :user_id, :old_data, :new_data)`,
 		change)

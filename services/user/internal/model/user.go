@@ -56,7 +56,7 @@ func (u *User) IsSuperAdmin() bool {
 
 // TableName specifies the table name for User.
 func (User) TableName() string {
-	return "auth.users"
+	return "lexi_auth.users"
 }
 
 // FullName returns the user's full name.
@@ -94,7 +94,7 @@ type RefreshToken struct {
 
 // TableName specifies the table name for RefreshToken.
 func (RefreshToken) TableName() string {
-	return "auth.refresh_tokens"
+	return "lexi_auth.refresh_tokens"
 }
 
 // IsExpired returns true if the token has expired.
@@ -161,7 +161,7 @@ type UserSession struct {
 
 // TableName specifies the table name for UserSession.
 func (UserSession) TableName() string {
-	return "auth.user_sessions"
+	return "lexi_auth.user_sessions"
 }
 
 // IsActive returns true if the session is still active.
@@ -183,7 +183,7 @@ type JWTKey struct {
 
 // TableName specifies the table name for JWTKey.
 func (JWTKey) TableName() string {
-	return "auth.jwt_keys"
+	return "lexi_auth.jwt_keys"
 }
 
 // PasswordReset represents a password reset request.
@@ -202,7 +202,7 @@ type PasswordReset struct {
 
 // TableName specifies the table name for PasswordReset.
 func (PasswordReset) TableName() string {
-	return "auth.password_resets"
+	return "lexi_auth.password_resets"
 }
 
 // IsExpired returns true if the reset token has expired.
@@ -226,5 +226,5 @@ type TokenBlacklist struct {
 
 // TableName specifies the table name for TokenBlacklist.
 func (TokenBlacklist) TableName() string {
-	return "auth.token_blacklist"
+	return "lexi_auth.token_blacklist"
 }

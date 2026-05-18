@@ -39,6 +39,17 @@ var (
 	ErrEmailNotVerified       = errors.New("email not verified")
 )
 
+// EmailNotVerifiedError is returned when a user tries to log in but their email
+// has not been verified yet. It carries the user ID so the frontend can
+// redirect to the verification page.
+type EmailNotVerifiedError struct {
+	UserID uuid.UUID
+}
+
+func (e *EmailNotVerifiedError) Error() string {
+	return "email not verified"
+}
+
 // RedisClient defines the minimal Redis interface used by the user service.
 type RedisClient interface {
 	Get(ctx context.Context, key string) (string, error)
@@ -472,7 +483,7 @@ func (s *userService) Login(ctx context.Context, req *LoginRequest, clientInfo *
 	}
 
 	if !user.EmailVerified {
-		return nil, ErrEmailNotVerified
+		return nil, &EmailNotVerifiedError{UserID: user.ID}
 	}
 
 	return s.createTokenPair(ctx, user, clientInfo)

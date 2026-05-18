@@ -387,7 +387,7 @@ func (c *Client) fetchChanges(cursor string) ([]models.ChangeLog, error) {
 	if cursor == "" {
 		// Initial sync - get recent changes
 		err := c.Hub.db.Select(&changes, `
-			SELECT * FROM sync.change_log 
+			SELECT * FROM lexi_sync.change_log 
 			WHERE user_id = $1 
 			AND changed_at > NOW() - INTERVAL '24 hours'
 			ORDER BY changed_at ASC
@@ -402,7 +402,7 @@ func (c *Client) fetchChanges(cursor string) ([]models.ChangeLog, error) {
 	}
 
 	err = c.Hub.db.Select(&changes, `
-		SELECT * FROM sync.change_log 
+		SELECT * FROM lexi_sync.change_log 
 		WHERE user_id = $1 
 		AND id > $2
 		ORDER BY changed_at ASC
@@ -436,7 +436,7 @@ func (h *Hub) storeConnection(client *Client) {
 	ip := client.Conn.RemoteAddr().String()
 	
 	_, err := h.db.Exec(`
-		INSERT INTO sync.connections 
+		INSERT INTO lexi_sync.connections 
 		(connection_id, user_id, device_id, device_type, is_active, ip_address)
 		VALUES ($1, $2, $3, $4, true, $5)
 		ON CONFLICT (connection_id) 
@@ -451,7 +451,7 @@ func (h *Hub) storeConnection(client *Client) {
 // deactivateConnection marks a connection as inactive
 func (h *Hub) deactivateConnection(connectionID string) {
 	_, err := h.db.Exec(`
-		UPDATE sync.connections 
+		UPDATE lexi_sync.connections 
 		SET is_active = false, disconnected_at = CURRENT_TIMESTAMP
 		WHERE connection_id = $1`, connectionID)
 
@@ -468,14 +468,14 @@ func (h *Hub) updatePresence(userID uuid.UUID, status string, deltaConnections i
 		h.db.Get(&count, `
 			SELECT COALESCE(SUM(delta), 0) FROM (
 				SELECT active_connections + $2 as delta 
-				FROM sync.presence 
+				FROM lexi_sync.presence 
 				WHERE user_id = $1
 				UNION ALL
 				SELECT $2
 			) t`, userID, deltaConnections)
 	} else {
 		h.db.Get(&count, `
-			SELECT active_connections FROM sync.presence WHERE user_id = $1`, userID)
+			SELECT active_connections FROM lexi_sync.presence WHERE user_id = $1`, userID)
 	}
 
 	if count < 0 {
@@ -483,7 +483,7 @@ func (h *Hub) updatePresence(userID uuid.UUID, status string, deltaConnections i
 	}
 
 	_, err := h.db.Exec(`
-		INSERT INTO sync.presence 
+		INSERT INTO lexi_sync.presence 
 		(user_id, status, active_connections, last_seen_at)
 		VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
 		ON CONFLICT (user_id) 
@@ -498,7 +498,7 @@ func (h *Hub) updatePresence(userID uuid.UUID, status string, deltaConnections i
 // updatePresenceConnectionCount updates just the connection count
 func (h *Hub) updatePresenceConnectionCount(userID uuid.UUID, delta int) {
 	_, err := h.db.Exec(`
-		UPDATE sync.presence 
+		UPDATE lexi_sync.presence 
 		SET active_connections = GREATEST(0, active_connections + $2),
 		    last_seen_at = CURRENT_TIMESTAMP
 		WHERE user_id = $1`, userID, delta)
@@ -525,7 +525,7 @@ func (h *Hub) cleanupStaleConnections() {
 
 	var staleConns []string
 	err := h.db.Select(&staleConns, `
-		SELECT connection_id FROM sync.connections 
+		SELECT connection_id FROM lexi_sync.connections 
 		WHERE is_active = true AND last_ping_at < $1`, cutoff)
 
 	if err != nil {

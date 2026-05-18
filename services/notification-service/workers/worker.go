@@ -70,7 +70,7 @@ func (w *Worker) processPendingNotifications() {
 	// Get pending notifications
 	var notifications []models.NotificationQueue
 	err := w.db.Select(&notifications, `
-		SELECT * FROM notification.queue 
+		SELECT * FROM lexi_notification.queue 
 		WHERE status = $1 
 		AND scheduled_at <= CURRENT_TIMESTAMP
 		AND retry_count < 3
@@ -105,8 +105,8 @@ func (w *Worker) processNotification(ctx context.Context, n *models.Notification
 
 	err := w.db.Get(&prefs, `
 		SELECT p.push_enabled, p.email_enabled, u.email as user_email, p.push_device_tokens
-		FROM notification.preferences p
-		JOIN auth.users u ON p.user_id = u.id
+		FROM lexi_notification.preferences p
+		JOIN lexi_auth.users u ON p.user_id = u.id
 		WHERE p.user_id = $1`, n.UserID)
 
 	if err != nil {
@@ -197,7 +197,7 @@ func (w *Worker) sendEmailNotification(n *models.NotificationQueue, email string
 // removeInvalidToken removes an invalid FCM token from user's devices
 func (w *Worker) removeInvalidToken(userID interface{}, token string) {
 	_, err := w.db.Exec(`
-		UPDATE notification.preferences 
+		UPDATE lexi_notification.preferences 
 		SET push_device_tokens = array_remove(push_device_tokens, $1),
 		    updated_at = CURRENT_TIMESTAMP
 		WHERE user_id = $2`, token, userID)
@@ -213,7 +213,7 @@ func (w *Worker) removeInvalidToken(userID interface{}, token string) {
 func (w *Worker) markSent(notificationID interface{}) {
 	now := time.Now()
 	_, err := w.db.Exec(`
-		UPDATE notification.queue 
+		UPDATE lexi_notification.queue 
 		SET status = $1, sent_at = $2
 		WHERE id = $3`, models.StatusSent, now, notificationID)
 
@@ -225,7 +225,7 @@ func (w *Worker) markSent(notificationID interface{}) {
 // markFailed marks a notification as failed
 func (w *Worker) markFailed(notificationID interface{}, reason string) {
 	_, err := w.db.Exec(`
-		UPDATE notification.queue 
+		UPDATE lexi_notification.queue 
 		SET status = $1, error_message = $2
 		WHERE id = $3`, models.StatusFailed, reason, notificationID)
 
@@ -237,7 +237,7 @@ func (w *Worker) markFailed(notificationID interface{}, reason string) {
 // retryOrFail increments retry count or marks as failed
 func (w *Worker) retryOrFail(notificationID interface{}, reason string) {
 	_, err := w.db.Exec(`
-		UPDATE notification.queue 
+		UPDATE lexi_notification.queue 
 		SET retry_count = retry_count + 1, error_message = $1
 		WHERE id = $2`, reason, notificationID)
 
@@ -251,7 +251,7 @@ func (w *Worker) processDueReminders() {
 	// Get due reminders
 	var reminders []models.ScheduledReminder
 	err := w.db.Select(&reminders, `
-		SELECT * FROM notification.scheduled_reminders 
+		SELECT * FROM lexi_notification.scheduled_reminders 
 		WHERE is_active = true 
 		AND sent_at IS NULL 
 		AND scheduled_for <= CURRENT_TIMESTAMP
@@ -294,7 +294,7 @@ func (w *Worker) processReminder(r *models.ScheduledReminder) {
 	}
 
 	_, err := w.db.NamedExec(`
-		INSERT INTO notification.queue 
+		INSERT INTO lexi_notification.queue 
 		(user_id, notification_type, channel, title, body, data, scheduled_at, status)
 		VALUES (:user_id, :notification_type, :channel, :title, :body, :data, :scheduled_at, :status)`,
 		queue)
@@ -306,7 +306,7 @@ func (w *Worker) processReminder(r *models.ScheduledReminder) {
 
 	// Mark reminder as sent
 	_, err = w.db.Exec(`
-		UPDATE notification.scheduled_reminders 
+		UPDATE lexi_notification.scheduled_reminders 
 		SET sent_at = CURRENT_TIMESTAMP
 		WHERE id = $1`, r.ID)
 
@@ -369,7 +369,7 @@ func (w *Worker) scheduleNextRecurrence(r *models.ScheduledReminder) {
 	}
 
 	_, err := w.db.NamedExec(`
-		INSERT INTO notification.scheduled_reminders 
+		INSERT INTO lexi_notification.scheduled_reminders 
 		(user_id, reminder_type, title, body, scheduled_for, timezone,
 		 recurrence, recurrence_end_date, entity_type, entity_id, is_active)
 		VALUES (:user_id, :reminder_type, :title, :body, :scheduled_for, :timezone,

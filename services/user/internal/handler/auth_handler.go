@@ -2,6 +2,7 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
@@ -117,11 +118,13 @@ func (h *AuthHandler) Login(c echo.Context) error {
 
 	resp, err := h.userService.Login(ctx, svcReq, clientInfo)
 	if err != nil {
-		if err == service.ErrEmailNotVerified {
+		var emailNotVerifiedErr *service.EmailNotVerifiedError
+		if errors.As(err, &emailNotVerifiedErr) {
 			return c.JSON(http.StatusForbidden, map[string]interface{}{
 				"error":   "Email verification required",
 				"code":    "EMAIL_NOT_VERIFIED",
 				"message": "Please verify your email before logging in.",
+				"user_id": emailNotVerifiedErr.UserID.String(),
 			})
 		}
 		return err

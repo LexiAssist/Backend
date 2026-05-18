@@ -103,7 +103,7 @@ func (h *Handler) GetPreferences(c *gin.Context) {
 		       notify_on_quiz_completion, notify_on_streak_achievement,
 		       notify_on_goal_completion, notify_on_material_processed,
 		       notify_on_study_reminder, updated_at, created_at
-		FROM notification.preferences
+		FROM lexi_notification.preferences
 		WHERE user_id = $1`, uid)
 
 	if err != nil {
@@ -125,7 +125,7 @@ func (h *Handler) GetPreferences(c *gin.Context) {
 		
 		// Insert default preferences
 		_, err = h.db.NamedExec(`
-			INSERT INTO notification.preferences 
+			INSERT INTO lexi_notification.preferences 
 			(user_id, push_enabled, email_enabled, email_frequency, 
 			 quiet_hours_start, quiet_hours_end, timezone,
 			 notify_on_quiz_completion, notify_on_streak_achievement,
@@ -167,7 +167,7 @@ func (h *Handler) UpdatePreferences(c *gin.Context) {
 	}
 
 	// Build dynamic update query
-	query := "UPDATE notification.preferences SET "
+	query := "UPDATE lexi_notification.preferences SET "
 	params := []interface{}{}
 	paramCount := 0
 
@@ -268,7 +268,7 @@ func (h *Handler) RegisterDevice(c *gin.Context) {
 
 	// Add token to user's device tokens
 	_, err = h.db.Exec(`
-		UPDATE notification.preferences 
+		UPDATE lexi_notification.preferences 
 		SET push_device_tokens = array_append(push_device_tokens, $1),
 		    updated_at = CURRENT_TIMESTAMP
 		WHERE user_id = $2 
@@ -300,7 +300,7 @@ func (h *Handler) UnregisterDevice(c *gin.Context) {
 	token := c.Param("token")
 
 	_, err = h.db.Exec(`
-		UPDATE notification.preferences 
+		UPDATE lexi_notification.preferences 
 		SET push_device_tokens = array_remove(push_device_tokens, $1),
 		    updated_at = CURRENT_TIMESTAMP
 		WHERE user_id = $2`,
@@ -331,7 +331,7 @@ func (h *Handler) GetReminders(c *gin.Context) {
 
 	var reminders []models.ScheduledReminder
 	err = h.db.Select(&reminders, `
-		SELECT * FROM notification.scheduled_reminders 
+		SELECT * FROM lexi_notification.scheduled_reminders 
 		WHERE user_id = $1 AND is_active = true AND cancelled_at IS NULL
 		ORDER BY scheduled_for ASC`, uid)
 
@@ -378,7 +378,7 @@ func (h *Handler) CreateReminder(c *gin.Context) {
 	}
 
 	_, err = h.db.NamedExec(`
-		INSERT INTO notification.scheduled_reminders 
+		INSERT INTO lexi_notification.scheduled_reminders 
 		(user_id, reminder_type, title, body, scheduled_for, timezone,
 		 recurrence, recurrence_end_date, entity_type, entity_id, is_active)
 		VALUES (:user_id, :reminder_type, :title, :body, :scheduled_for, :timezone,
@@ -414,7 +414,7 @@ func (h *Handler) CancelReminder(c *gin.Context) {
 	}
 
 	_, err = h.db.Exec(`
-		UPDATE notification.scheduled_reminders 
+		UPDATE lexi_notification.scheduled_reminders 
 		SET is_active = false, cancelled_at = CURRENT_TIMESTAMP
 		WHERE id = $1 AND user_id = $2`,
 		reminderID, uid)
@@ -451,7 +451,7 @@ func (h *Handler) GetNotificationHistory(c *gin.Context) {
 
 	var history []models.NotificationHistory
 	err = h.db.Select(&history, `
-		SELECT * FROM notification.history 
+		SELECT * FROM lexi_notification.history 
 		WHERE user_id = $1
 		ORDER BY sent_at DESC
 		LIMIT $2`, uid, limit)
@@ -492,7 +492,7 @@ func (h *Handler) SendNotification(c *gin.Context) {
 	}
 
 	_, err := h.db.NamedExec(`
-		INSERT INTO notification.queue 
+		INSERT INTO lexi_notification.queue 
 		(user_id, notification_type, channel, title, body, data, scheduled_at, status)
 		VALUES (:user_id, :notification_type, :channel, :title, :body, :data, :scheduled_at, :status)`,
 		queue)
@@ -522,7 +522,7 @@ func (h *Handler) HandleEvent(c *gin.Context) {
 		       notify_on_quiz_completion, notify_on_streak_achievement,
 		       notify_on_goal_completion, notify_on_material_processed,
 		       notify_on_study_reminder, updated_at, created_at
-		FROM notification.preferences
+		FROM lexi_notification.preferences
 		WHERE user_id = $1`, event.UserID)
 
 	if err != nil {
@@ -554,7 +554,7 @@ func (h *Handler) HandleEvent(c *gin.Context) {
 		}
 
 		_, err := h.db.NamedExec(`
-			INSERT INTO notification.queue 
+			INSERT INTO lexi_notification.queue 
 			(user_id, notification_type, channel, title, body, data, scheduled_at, status)
 			VALUES (:user_id, :notification_type, :channel, :title, :body, :data, :scheduled_at, :status)`,
 			queue)
@@ -581,7 +581,7 @@ func (h *Handler) HandleEvent(c *gin.Context) {
 	}
 
 	_, err = h.db.NamedExec(`
-		INSERT INTO notification.queue 
+		INSERT INTO lexi_notification.queue 
 		(user_id, notification_type, channel, title, body, data, scheduled_at, status)
 		VALUES (:user_id, :notification_type, :channel, :title, :body, :data, :scheduled_at, :status)`,
 		queue)
