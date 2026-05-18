@@ -156,7 +156,7 @@ func TestUserService_Register(t *testing.T) {
 				VerificationCodeTTL:     15 * time.Minute,
 			}
 
-			svc, err := service.NewUserService(userRepo, refreshTokenRepo, sessionRepo, passwordResetRepo, jwtKeyRepo, redisClient, cfg)
+			svc, err := service.NewUserService(userRepo, refreshTokenRepo, sessionRepo, passwordResetRepo, jwtKeyRepo, redisClient, nil, cfg)
 			if err != nil {
 				t.Skipf("Skipping test due to RSA key generation: %v", err)
 				return
@@ -304,7 +304,7 @@ func TestUserService_Login(t *testing.T) {
 				RefreshTokenTTL:         30 * 24 * time.Hour,
 			}
 
-			svc, err := service.NewUserService(userRepo, refreshTokenRepo, sessionRepo, passwordResetRepo, jwtKeyRepo, redisClient, cfg)
+			svc, err := service.NewUserService(userRepo, refreshTokenRepo, sessionRepo, passwordResetRepo, jwtKeyRepo, redisClient, nil, cfg)
 			if err != nil {
 				t.Skipf("Skipping test due to RSA key generation: %v", err)
 				return
@@ -398,7 +398,7 @@ func TestUserService_GetProfile(t *testing.T) {
 				RefreshTokenTTL:         30 * 24 * time.Hour,
 			}
 
-			svc, err := service.NewUserService(userRepo, refreshTokenRepo, sessionRepo, passwordResetRepo, jwtKeyRepo, redisClient, cfg)
+			svc, err := service.NewUserService(userRepo, refreshTokenRepo, sessionRepo, passwordResetRepo, jwtKeyRepo, redisClient, nil, cfg)
 			if err != nil {
 				t.Skipf("Skipping test due to RSA key generation: %v", err)
 				return
@@ -499,7 +499,7 @@ func TestUserService_ChangePassword(t *testing.T) {
 				RefreshTokenTTL:         30 * 24 * time.Hour,
 			}
 
-			svc, err := service.NewUserService(userRepo, refreshTokenRepo, sessionRepo, passwordResetRepo, jwtKeyRepo, redisClient, cfg)
+			svc, err := service.NewUserService(userRepo, refreshTokenRepo, sessionRepo, passwordResetRepo, jwtKeyRepo, redisClient, nil, cfg)
 			if err != nil {
 				t.Skipf("Skipping test due to RSA key generation: %v", err)
 				return
@@ -606,7 +606,7 @@ func TestUserService_VerifyEmail(t *testing.T) {
 				RefreshTokenTTL:         30 * 24 * time.Hour,
 			}
 
-			svc, err := service.NewUserService(userRepo, refreshTokenRepo, sessionRepo, passwordResetRepo, jwtKeyRepo, redisClient, cfg)
+			svc, err := service.NewUserService(userRepo, refreshTokenRepo, sessionRepo, passwordResetRepo, jwtKeyRepo, redisClient, nil, cfg)
 			if err != nil {
 				t.Skipf("Skipping test due to RSA key generation: %v", err)
 				return
@@ -729,7 +729,7 @@ func TestUserService_ListSessions(t *testing.T) {
 				RefreshTokenTTL:         30 * 24 * time.Hour,
 			}
 
-			svc, err := service.NewUserService(userRepo, refreshTokenRepo, sessionRepo, passwordResetRepo, jwtKeyRepo, redisClient, cfg)
+			svc, err := service.NewUserService(userRepo, refreshTokenRepo, sessionRepo, passwordResetRepo, jwtKeyRepo, redisClient, nil, cfg)
 			if err != nil {
 				t.Skipf("Skipping test due to RSA key generation: %v", err)
 				return
@@ -827,7 +827,7 @@ func TestUserService_RevokeSession(t *testing.T) {
 				RefreshTokenTTL:         30 * 24 * time.Hour,
 			}
 
-			svc, err := service.NewUserService(userRepo, refreshTokenRepo, sessionRepo, passwordResetRepo, jwtKeyRepo, redisClient, cfg)
+			svc, err := service.NewUserService(userRepo, refreshTokenRepo, sessionRepo, passwordResetRepo, jwtKeyRepo, redisClient, nil, cfg)
 			if err != nil {
 				t.Skipf("Skipping test due to RSA key generation: %v", err)
 				return

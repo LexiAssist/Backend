@@ -142,7 +142,8 @@ func (r *studySessionRepository) GetUserStats(ctx context.Context, userID uuid.U
 		var totalDays int64
 		if err := tx.Model(&model.StudySession{}).
 			Where("user_id = ?", userID).
-			Count(&totalDays).Error; err != nil {
+			Select("COUNT(DISTINCT session_date)").
+			Scan(&totalDays).Error; err != nil {
 			return err
 		}
 		stats.TotalStudyDays = int(totalDays)

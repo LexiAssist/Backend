@@ -13,6 +13,7 @@ import (
 	echomiddleware "github.com/labstack/echo/v4/middleware"
 	"go.uber.org/zap"
 
+	"lexiassist/services/user/internal/client"
 	"lexiassist/services/user/internal/handler"
 	custommiddleware "lexiassist/services/user/internal/middleware"
 	"lexiassist/services/user/internal/repository"
@@ -94,6 +95,12 @@ func main() {
 	passwordResetRepo := repository.NewPasswordResetRepository(db.DB)
 	jwtKeyRepo := repository.NewJWTKeyRepository(db.DB)
 
+	// Initialize notification client
+	notificationClient := client.NewNotificationClient(
+		userCfg.NotificationServiceURL,
+		userCfg.InternalAPIKey,
+	)
+
 	// Initialize services
 	userSvc, err := service.NewUserService(
 		userRepo,
@@ -102,6 +109,7 @@ func main() {
 		passwordResetRepo,
 		jwtKeyRepo,
 		redisClient,
+		notificationClient,
 		userCfg,
 	)
 	if err != nil {

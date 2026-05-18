@@ -24,15 +24,17 @@ var Log = logger.Get()
 // AIClient provides methods to interact with the FastAPI AI service.
 // It handles multipart uploads, SSE streaming, and authentication injection.
 type AIClient struct {
-	baseURL    string
-	httpClient *http.Client
-	logger     *zap.Logger
+	baseURL     string
+	internalKey string
+	httpClient  *http.Client
+	logger      *zap.Logger
 }
 
 // NewAIClient creates a new AI service client with configured timeouts and connection pooling.
 func NewAIClient(cfg *config.Config) *AIClient {
 	return &AIClient{
-		baseURL: cfg.AIServiceURL,
+		baseURL:     cfg.AIServiceURL,
+		internalKey: cfg.InternalAPIKey,
 		httpClient: &http.Client{
 			Timeout: cfg.AIServiceTimeout,
 			Transport: &http.Transport{
@@ -146,6 +148,7 @@ func (c *AIClient) doRequest(req *http.Request) (*http.Response, error) {
 	backoffs := []time.Duration{2 * time.Second, 4 * time.Second, 8 * time.Second}
 
 	for attempt := 0; attempt <= len(backoffs); attempt++ {
+		req.Header.Set("X-Internal-Key", c.internalKey)
 		start := time.Now()
 		resp, err = c.httpClient.Do(req)
 		duration := time.Since(start)

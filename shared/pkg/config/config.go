@@ -46,6 +46,8 @@ type UserServiceConfig struct {
 	SMTPPassword            string
 	SMTPFrom                string
 	FrontendURL             string
+	NotificationServiceURL  string
+	InternalAPIKey          string
 }
 
 // GatewayConfig holds Gateway specific configuration.
@@ -174,6 +176,8 @@ func (l *Loader) LoadUserServiceConfig() (*UserServiceConfig, error) {
 		SMTPPassword:            os.Getenv("SMTP_PASSWORD"),
 		SMTPFrom:                getEnv("SMTP_FROM", "noreply@lexiassist.com"),
 		FrontendURL:             getEnv("FRONTEND_URL", "http://localhost:3000"),
+		NotificationServiceURL:  getEnv("NOTIFICATION_SERVICE_URL", "http://localhost:8084"),
+		InternalAPIKey:          getEnv("INTERNAL_API_KEY", "dev-internal-key"),
 	}, nil
 }
 

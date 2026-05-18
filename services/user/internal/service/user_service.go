@@ -17,12 +17,12 @@ import (
 	"github.com/labstack/echo/v4"
 	"go.uber.org/zap"
 
+	"lexiassist/services/user/internal/client"
 	"lexiassist/services/user/internal/model"
 	"lexiassist/services/user/internal/repository"
 	"lexiassist/shared/pkg/auth"
 	"lexiassist/shared/pkg/config"
 	"lexiassist/shared/pkg/logger"
-	"lexiassist/shared/pkg/redis"
 )
 
 var (
@@ -36,7 +36,16 @@ var (
 	ErrInvalidPassword        = errors.New("invalid password")
 	ErrSessionNotFound        = errors.New("session not found")
 	ErrUnauthorized           = errors.New("unauthorized")
+	ErrEmailNotVerified       = errors.New("email not verified")
 )
+
+// RedisClient defines the minimal Redis interface used by the user service.
+type RedisClient interface {
+	Get(ctx context.Context, key string) (string, error)
+	Set(ctx context.Context, key string, value interface{}, expiration time.Duration) error
+	Delete(ctx context.Context, keys ...string) error
+	Exists(ctx context.Context, key string) (bool, error)
+}
 
 // UserService defines the interface for user business logic.
 type UserService interface {
@@ -137,16 +146,17 @@ type SessionResponse struct {
 
 // userService implements UserService.
 type userService struct {
-	userRepo         repository.UserRepository
-	refreshTokenRepo repository.RefreshTokenRepository
-	sessionRepo      repository.SessionRepository
-	passwordResetRepo repository.PasswordResetRepository
-	jwtKeyRepo       repository.JWTKeyRepository
-	jwtManager       *auth.JWTManager
-	passwordHasher   *auth.PasswordHasher
-	keyEncryption    *auth.KeyEncryption
-	redisClient      *redis.Client
-	config           *config.UserServiceConfig
+	userRepo             repository.UserRepository
+	refreshTokenRepo     repository.RefreshTokenRepository
+	sessionRepo          repository.SessionRepository
+	passwordResetRepo    repository.PasswordResetRepository
+	jwtKeyRepo           repository.JWTKeyRepository
+	jwtManager           *auth.JWTManager
+	passwordHasher       *auth.PasswordHasher
+	keyEncryption        *auth.KeyEncryption
+	redisClient          RedisClient
+	notificationClient   *client.NotificationClient
+	config               *config.UserServiceConfig
 }
 
 // NewUserService creates a new user service.
@@ -156,7 +166,8 @@ func NewUserService(
 	sessionRepo repository.SessionRepository,
 	passwordResetRepo repository.PasswordResetRepository,
 	jwtKeyRepo repository.JWTKeyRepository,
-	redisClient *redis.Client,
+	redisClient RedisClient,
+	notificationClient *client.NotificationClient,
 	cfg *config.UserServiceConfig,
 ) (UserService, error) {
 	// Initialize key encryption
@@ -175,16 +186,17 @@ func NewUserService(
 	passwordHasher := auth.NewPasswordHasher(cfg.BcryptCost)
 
 	return &userService{
-		userRepo:         userRepo,
-		refreshTokenRepo: refreshTokenRepo,
-		sessionRepo:      sessionRepo,
-		passwordResetRepo: passwordResetRepo,
-		jwtKeyRepo:       jwtKeyRepo,
-		jwtManager:       jwtManager,
-		passwordHasher:   passwordHasher,
-		keyEncryption:    keyEncryption,
-		redisClient:      redisClient,
-		config:           cfg,
+		userRepo:           userRepo,
+		refreshTokenRepo:   refreshTokenRepo,
+		sessionRepo:        sessionRepo,
+		passwordResetRepo:  passwordResetRepo,
+		jwtKeyRepo:         jwtKeyRepo,
+		jwtManager:         jwtManager,
+		passwordHasher:     passwordHasher,
+		keyEncryption:      keyEncryption,
+		redisClient:        redisClient,
+		notificationClient: notificationClient,
+		config:             cfg,
 	}, nil
 }
 
@@ -323,8 +335,11 @@ func (s *userService) Register(ctx context.Context, req *RegisterRequest) (*User
 			logger.Error("failed to store verification code in redis")
 		}
 
-		// TODO: Send verification email (async via notification service)
-		logger.Info("verification code generated", zap.String("user_id", user.ID.String()))
+		if s.notificationClient != nil {
+			if err := s.notificationClient.SendVerificationEmail(ctx, user.ID, user.Email, user.FirstName, verificationCode); err != nil {
+				logger.Error("failed to send verification email", zap.Error(err), zap.String("user_id", user.ID.String()))
+			}
+		}
 	}
 
 	return mapUserToResponse(user), nil
@@ -427,8 +442,11 @@ func (s *userService) ResendVerification(ctx context.Context, userID string) err
 	// Set rate limit
 	s.redisClient.Set(ctx, rateLimitKey, "1", time.Minute)
 
-	// TODO: Send verification email
-	logger.Info("verification code resent")
+	if s.notificationClient != nil {
+		if err := s.notificationClient.SendVerificationEmail(ctx, id, user.Email, user.FirstName, verificationCode); err != nil {
+			logger.Error("failed to send verification email", zap.Error(err), zap.String("user_id", user.ID.String()))
+		}
+	}
 
 	return nil
 }
@@ -451,6 +469,10 @@ func (s *userService) Login(ctx context.Context, req *LoginRequest, clientInfo *
 	// Verify password
 	if err := s.passwordHasher.VerifyPassword(req.Password, user.PasswordHash); err != nil {
 		return nil, echo.NewHTTPError(http.StatusUnauthorized, "invalid credentials")
+	}
+
+	if !user.EmailVerified {
+		return nil, ErrEmailNotVerified
 	}
 
 	return s.createTokenPair(ctx, user, clientInfo)
@@ -744,8 +766,11 @@ func (s *userService) RequestPasswordReset(ctx context.Context, email string) er
 	// Set rate limit
 	s.redisClient.Set(ctx, rateLimitKey, "1", 5*time.Minute)
 
-	// TODO: Send password reset email
-	logger.Info("password reset token generated")
+	if s.notificationClient != nil {
+		if err := s.notificationClient.SendPasswordResetEmail(ctx, user.ID, user.Email, user.FirstName, resetToken); err != nil {
+			logger.Error("failed to send password reset email", zap.Error(err), zap.String("user_id", user.ID.String()))
+		}
+	}
 
 	return nil
 }

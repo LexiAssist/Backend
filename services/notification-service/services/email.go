@@ -227,6 +227,72 @@ func init() {
 </html>
 `))
 
+	// Email verification template
+	emailTemplates["email_verification"] = template.Must(template.New("email_verification").Parse(`
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background: #673AB7; color: white; padding: 20px; text-align: center; }
+        .content { padding: 20px; background: #f9f9f9; }
+        .code { font-size: 32px; font-weight: bold; color: #673AB7; text-align: center; letter-spacing: 4px; }
+        .footer { padding: 20px; text-align: center; color: #666; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Verify Your Email</h1>
+        </div>
+        <div class="content">
+            <p>Hi {{.Name}},</p>
+            <p>Thanks for signing up for LexiAssist. Use the code below to verify your email address:</p>
+            <p class="code">{{.Code}}</p>
+            <p>This code expires in 15 minutes.</p>
+        </div>
+        <div class="footer">
+            <p>You're receiving this because you registered on LexiAssist.</p>
+        </div>
+    </div>
+</body>
+</html>
+`))
+
+	// Password reset template
+	emailTemplates["password_reset"] = template.Must(template.New("password_reset").Parse(`
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background: #F44336; color: white; padding: 20px; text-align: center; }
+        .content { padding: 20px; background: #f9f9f9; }
+        .code { font-size: 32px; font-weight: bold; color: #F44336; text-align: center; letter-spacing: 4px; }
+        .footer { padding: 20px; text-align: center; color: #666; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Password Reset Request</h1>
+        </div>
+        <div class="content">
+            <p>Hi {{.Name}},</p>
+            <p>We received a request to reset your LexiAssist password. Use the code below:</p>
+            <p class="code">{{.Code}}</p>
+            <p>This code expires in 15 minutes. If you didn't request this, you can safely ignore this email.</p>
+        </div>
+        <div class="footer">
+            <p>You're receiving this because a password reset was requested on LexiAssist.</p>
+        </div>
+    </div>
+</body>
+</html>
+`))
+
 	// Study reminder template
 	emailTemplates["study_reminder"] = template.Must(template.New("study_reminder").Parse(`
 <!DOCTYPE html>

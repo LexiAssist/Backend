@@ -107,7 +107,7 @@ services:
       - key: PORT
         value: 8081
       - key: DATABASE_URL
-        value: postgresql://postgres.jsvndsaltnblsydzrxjd:boluwatife21@aws-1-eu-north-1.pooler.supabase.com:6543/postgres
+        sync: false
       - key: REDIS_URL
         fromService:
           type: redis
@@ -144,7 +144,7 @@ services:
       - key: PORT
         value: 8082
       - key: DATABASE_URL
-        value: postgresql://postgres.jsvndsaltnblsydzrxjd:boluwatife21@aws-1-eu-north-1.pooler.supabase.com:6543/postgres
+        sync: false
       - key: REDIS_URL
         fromService:
           type: redis
@@ -156,7 +156,7 @@ services:
           name: lexiassist-minio
           property: host
       - key: MINIO_ACCESS_KEY
-        value: minioadmin
+        sync: false
       - key: MINIO_SECRET_KEY
         generateValue: true
       - key: MINIO_BUCKET
@@ -183,7 +183,7 @@ services:
       - key: PORT
         value: 8083
       - key: DATABASE_URL
-        value: postgresql://postgres.jsvndsaltnblsydzrxjd:boluwatife21@aws-1-eu-north-1.pooler.supabase.com:6543/postgres
+        sync: false
       - key: REDIS_URL
         fromService:
           type: redis
@@ -209,7 +209,7 @@ services:
       - key: PORT
         value: 8084
       - key: DATABASE_URL
-        value: postgresql://postgres.jsvndsaltnblsydzrxjd:boluwatife21@aws-1-eu-north-1.pooler.supabase.com:6543/postgres
+        sync: false
       - key: SMTP_HOST
         sync: false
       - key: SMTP_PORT
@@ -243,7 +243,7 @@ services:
       - key: PORT
         value: 8085
       - key: DATABASE_URL
-        value: postgresql://postgres.jsvndsaltnblsydzrxjd:boluwatife21@aws-1-eu-north-1.pooler.supabase.com:6543/postgres
+        sync: false
       - key: INTERNAL_API_KEY
         fromService:
           type: web
@@ -302,7 +302,7 @@ services:
       - key: PORT
         value: 5003
       - key: DATABASE_URL
-        value: postgresql://postgres.jsvndsaltnblsydzrxjd:boluwatife21@aws-1-eu-north-1.pooler.supabase.com:6543/postgres
+        sync: false
       - key: INTERNAL_API_KEY
         fromService:
           type: web
@@ -336,7 +336,7 @@ services:
       - key: PORT
         value: 5006
       - key: DATABASE_URL
-        value: postgresql://postgres.jsvndsaltnblsydzrxjd:boluwatife21@aws-1-eu-north-1.pooler.supabase.com:6543/postgres
+        sync: false
       - key: INTERNAL_API_KEY
         fromService:
           type: web
@@ -354,7 +354,7 @@ services:
       - key: PORT
         value: 8000
       - key: DATABASE_URL
-        value: postgresql://postgres.jsvndsaltnblsydzrxjd:boluwatife21@aws-1-eu-north-1.pooler.supabase.com:6543/postgres
+        sync: false
       - key: REDIS_URL
         fromService:
           type: redis
@@ -391,7 +391,7 @@ services:
     dockerCommand: server /data --console-address :9001
     envVars:
       - key: MINIO_ROOT_USER
-        value: minioadmin
+        sync: false
       - key: MINIO_ROOT_PASSWORD
         generateValue: true
     disk:

@@ -164,7 +164,7 @@ services:
           name: lexiassist-minio
           property: host
       - key: MINIO_ACCESS_KEY
-        value: minioadmin
+        sync: false
       - key: MINIO_SECRET_KEY
         generateValue: true
       - key: MINIO_BUCKET
@@ -396,7 +396,7 @@ services:
     dockerCommand: server /data --console-address :9001
     envVars:
       - key: MINIO_ROOT_USER
-        value: minioadmin
+        sync: false
       - key: MINIO_ROOT_PASSWORD
         generateValue: true
     disk:

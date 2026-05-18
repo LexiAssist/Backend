@@ -3,7 +3,6 @@
 
 -- Create content schema
 CREATE SCHEMA IF NOT EXISTS content;
-CREATE SCHEMA IF NOT EXISTS lexi_content;
 
 -- Courses table
 CREATE TABLE IF NOT EXISTS lexi_content.courses (
