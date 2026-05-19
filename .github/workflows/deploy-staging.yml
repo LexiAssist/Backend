@@ -17,7 +17,11 @@ jobs:
           username: ${{ secrets.STAGING_USER }}
           key: ${{ secrets.STAGING_SSH_KEY }}
           script: |
-            cd /opt/lexiassist/backend && git pull origin main && cd infra && docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d
+            cd /opt/lexiassist/backend
+            git pull origin main
+            cd infra
+            docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d --build
+            docker image prune -f
 
       - name: Health check
         run: |
