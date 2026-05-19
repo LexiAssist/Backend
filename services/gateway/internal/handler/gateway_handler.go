@@ -123,6 +123,7 @@ func (h *GatewayHandler) RegisterRoutes(e *echo.Echo) {
 		protected.POST("/ai/generate/summary", h.ProxyToAIOrchestrator)
 		protected.POST("/ai/generate/flashcards", h.ProxyToAIOrchestrator)
 		protected.POST("/ai/chat", h.ProxyToAIOrchestrator)
+		protected.POST("/ai/chat/stream", h.ProxyToAIOrchestrator)
 		protected.GET("/ai/conversation/:id", h.ProxyToAIOrchestrator)
 		protected.DELETE("/ai/conversation/:id", h.ProxyToAIOrchestrator)
 		
