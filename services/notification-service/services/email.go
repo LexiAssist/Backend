@@ -232,28 +232,157 @@ func init() {
 <!DOCTYPE html>
 <html>
 <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Your Lexi Assist Verification Code</title>
     <style>
-        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-        .header { background: #673AB7; color: white; padding: 20px; text-align: center; }
-        .content { padding: 20px; background: #f9f9f9; }
-        .code { font-size: 32px; font-weight: bold; color: #673AB7; text-align: center; letter-spacing: 4px; }
-        .footer { padding: 20px; text-align: center; color: #666; font-size: 12px; }
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        
+        body { 
+            margin: 0; 
+            padding: 0; 
+            min-width: 100%; 
+            width: 100% !important; 
+            background-color: #fafafa; 
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+            -webkit-font-smoothing: antialiased; 
+            color: #1a1a1a;
+        }
+        .wrapper { 
+            width: 100%; 
+            table-layout: fixed; 
+            background-color: #fafafa; 
+            padding: 64px 0; 
+        }
+        .container { 
+            max-width: 480px; 
+            margin: 0 auto; 
+            background-color: #ffffff; 
+            border-radius: 12px; 
+            border: 1px solid #e5e7eb; 
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+            overflow: hidden;
+        }
+        .logo-area {
+            padding: 40px 40px 0 40px;
+            text-align: left;
+        }
+        .logo-text {
+            font-size: 20px;
+            font-weight: 700;
+            color: #0f172a;
+            letter-spacing: -0.5px;
+            margin: 0;
+            display: inline-flex;
+            align-items: center;
+        }
+        .logo-dot {
+            width: 6px;
+            height: 6px;
+            background-color: #10b981;
+            border-radius: 50%;
+            display: inline-block;
+            margin-left: 4px;
+        }
+        .content { 
+            padding: 32px 40px 40px 40px; 
+        }
+        .title {
+            font-size: 22px;
+            font-weight: 600;
+            color: #111827;
+            margin-top: 0;
+            margin-bottom: 20px;
+            letter-spacing: -0.4px;
+        }
+        .greeting { 
+            font-size: 15px; 
+            font-weight: 500; 
+            color: #111827; 
+            margin-bottom: 12px; 
+        }
+        .text { 
+            font-size: 15px; 
+            line-height: 1.6; 
+            color: #4b5563; 
+            margin: 0 0 28px 0; 
+        }
+        .code-container {
+            text-align: center;
+            margin: 28px 0;
+        }
+        .code-box { 
+            background-color: #f9fafb; 
+            border: 1px solid #e5e7eb;
+            border-radius: 8px; 
+            padding: 16px 28px; 
+            display: inline-block;
+        }
+        .code-value { 
+            font-size: 32px; 
+            font-weight: 700; 
+            color: #111827; 
+            letter-spacing: 6px; 
+            margin: 0; 
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; 
+            padding-left: 6px;
+        }
+        .expire-text { 
+            font-size: 13px; 
+            color: #6b7280; 
+            text-align: center;
+            margin-top: 16px;
+            margin-bottom: 28px;
+        }
+        .divider { 
+            height: 1px; 
+            background-color: #f3f4f6; 
+            margin: 28px 0; 
+        }
+        .security-note { 
+            font-size: 13px; 
+            color: #9ca3af; 
+            line-height: 1.5; 
+            margin: 0; 
+        }
+        .footer { 
+            padding: 0 40px 40px 40px; 
+            text-align: left; 
+        }
+        .footer-text { 
+            font-size: 12px; 
+            color: #9ca3af; 
+            margin: 0; 
+            line-height: 1.5;
+        }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <h1>Verify Your Email</h1>
-        </div>
-        <div class="content">
-            <p>Hi {{.Name}},</p>
-            <p>Thanks for signing up for LexiAssist. Use the code below to verify your email address:</p>
-            <p class="code">{{.Code}}</p>
-            <p>This code expires in 15 minutes.</p>
-        </div>
-        <div class="footer">
-            <p>You're receiving this because you registered on LexiAssist.</p>
+    <div class="wrapper">
+        <div class="container">
+            <div class="logo-area">
+                <div class="logo-text">Lexi Assist<span class="logo-dot"></span></div>
+            </div>
+            <div class="content">
+                <h2 class="title">Verify your email address</h2>
+                <div class="greeting">Hello,</div>
+                <div class="text">
+                    Use the verification code below to complete your sign-in or account verification for Lexi Assist.
+                </div>
+                <div class="code-container">
+                    <div class="code-box">
+                        <div class="code-value">{{.Code}}</div>
+                    </div>
+                </div>
+                <div class="expire-text">This verification code will expire in 10 minutes.</div>
+                <div class="divider"></div>
+                <p class="security-note">
+                    If you did not request this code, you can safely ignore this email.
+                </p>
+            </div>
+            <div class="footer">
+                <p class="footer-text">&copy; 2026 Lexi Assist. All rights reserved.</p>
+            </div>
         </div>
     </div>
 </body>
