@@ -151,7 +151,7 @@ func (w *Worker) sendPushNotification(ctx context.Context, n *models.Notificatio
 
 	// Send to all device tokens
 	for _, token := range tokens {
-		err := w.fcmService.SendNotification(ctx, token, n.Title, n.Body, n.Data)
+		err := w.fcmService.SendNotification(ctx, token, n.Title, n.Body, map[string]interface{}(n.Data))
 		if err != nil {
 			if err.Error() == "invalid_token" {
 				// Remove invalid token
@@ -283,7 +283,7 @@ func (w *Worker) processReminder(r *models.ScheduledReminder) {
 		Channel:     models.ChannelFCM,
 		Title:       r.Title,
 		Body:        r.Body,
-		Data: map[string]interface{}{
+		Data: models.JSONB{
 			"reminder_id": r.ID.String(),
 			"reminder_type": r.Type,
 			"entity_type": r.EntityType,
