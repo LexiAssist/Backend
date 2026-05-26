@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS lexi_auth.refresh_tokens (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL REFERENCES lexi_auth.users(id) ON DELETE CASCADE,
     token_hash VARCHAR(255) NOT NULL,
-    device_info TEXT, -- JSON with device name, OS, browser
+    device_info JSONB, -- JSON with device name, OS, browser
     ip_address INET,
     issued_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     expires_at TIMESTAMP WITH TIME ZONE NOT NULL,

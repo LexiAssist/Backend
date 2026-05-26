@@ -77,19 +77,23 @@ func JWTMiddleware(validator *JWTValidator, skipper func(echo.Context) bool) ech
 				return next(c)
 			}
 			
-			// Extract token from Authorization header
+			// Extract token from Authorization header or query param (needed for WebSocket)
+			var tokenString string
 			authHeader := c.Request().Header.Get("Authorization")
-			if authHeader == "" {
-				return echo.NewHTTPError(http.StatusUnauthorized, "missing authorization header")
+			if authHeader != "" {
+				// Parse Bearer token
+				parts := strings.SplitN(authHeader, " ", 2)
+				if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
+					return echo.NewHTTPError(http.StatusUnauthorized, "invalid authorization header format")
+				}
+				tokenString = parts[1]
+			} else {
+				// Fallback to query param for WebSocket auth
+				tokenString = c.QueryParam("token")
+				if tokenString == "" {
+					return echo.NewHTTPError(http.StatusUnauthorized, "missing authorization header")
+				}
 			}
-			
-			// Parse Bearer token
-			parts := strings.SplitN(authHeader, " ", 2)
-			if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
-				return echo.NewHTTPError(http.StatusUnauthorized, "invalid authorization header format")
-			}
-			
-			tokenString := parts[1]
 			
 			// Validate token
 			claims, err := validator.Validate(tokenString)
