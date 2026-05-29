@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 )
 
 // JSONB is a PostgreSQL JSONB-compatible type that implements driver.Valuer
@@ -44,7 +45,7 @@ type NotificationPreferences struct {
 	ID                       uuid.UUID      `db:"id" json:"id"`
 	UserID                   uuid.UUID      `db:"user_id" json:"user_id"`
 	PushEnabled              bool           `db:"push_enabled" json:"push_enabled"`
-	PushDeviceTokens         string         `db:"push_device_tokens" json:"push_device_tokens"`
+	PushDeviceTokens         pq.StringArray `db:"push_device_tokens" json:"push_device_tokens"`
 	EmailEnabled             bool           `db:"email_enabled" json:"email_enabled"`
 	EmailFrequency           string    `db:"email_frequency" json:"email_frequency"`
 	QuietHoursStart          int       `db:"quiet_hours_start" json:"quiet_hours_start"`
