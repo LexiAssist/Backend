@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 	"lexiassist/shared/pkg/logger"
 
 	"lexiassist/services/notification-service/models"
@@ -97,17 +98,17 @@ func (w *Worker) processPendingNotifications() {
 func (w *Worker) processNotification(ctx context.Context, n *models.NotificationQueue) {
 	// Get user preferences and email
 	var prefs struct {
-		PushEnabled  bool   `db:"push_enabled"`
-		EmailEnabled bool   `db:"email_enabled"`
-		UserEmail    string `db:"user_email"`
-		Tokens       []string `db:"push_device_tokens"`
+		PushEnabled  bool           `db:"push_enabled"`
+		EmailEnabled bool           `db:"email_enabled"`
+		UserEmail    string         `db:"user_email"`
+		Tokens       pq.StringArray `db:"push_device_tokens"`
 	}
 
 	err := w.db.Get(&prefs, `
 		SELECT COALESCE(p.push_enabled, true) as push_enabled,
 		       COALESCE(p.email_enabled, true) as email_enabled,
 		       u.email as user_email,
-		       p.push_device_tokens
+		       COALESCE(p.push_device_tokens, ARRAY[]::text[]) as push_device_tokens
 		FROM lexi_auth.users u
 		LEFT JOIN lexi_notification.preferences p ON p.user_id = u.id
 		WHERE u.id = $1`, n.UserID)
