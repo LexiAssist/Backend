@@ -65,6 +65,7 @@ func main() {
 	minioClient, err := minio.New(cfg.MinIOEndpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(cfg.MinIOAccessKey, cfg.MinIOSecretKey, ""),
 		Secure: cfg.MinIOUseSSL,
+		Region: "us-east-1",
 	})
 	if err != nil {
 		logger.Fatal("failed to initialize MinIO client", zap.Error(err))
