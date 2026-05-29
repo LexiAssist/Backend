@@ -104,10 +104,13 @@ func (w *Worker) processNotification(ctx context.Context, n *models.Notification
 	}
 
 	err := w.db.Get(&prefs, `
-		SELECT p.push_enabled, p.email_enabled, u.email as user_email, p.push_device_tokens
-		FROM lexi_notification.preferences p
-		JOIN lexi_auth.users u ON p.user_id = u.id
-		WHERE p.user_id = $1`, n.UserID)
+		SELECT COALESCE(p.push_enabled, true) as push_enabled,
+		       COALESCE(p.email_enabled, true) as email_enabled,
+		       u.email as user_email,
+		       p.push_device_tokens
+		FROM lexi_auth.users u
+		LEFT JOIN lexi_notification.preferences p ON p.user_id = u.id
+		WHERE u.id = $1`, n.UserID)
 
 	if err != nil {
 		logger.Error(fmt.Sprintf("Failed to get user preferences for notification %s: %v", n.ID, err))
