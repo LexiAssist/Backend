@@ -12,6 +12,8 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 	"go.uber.org/zap"
 
 	"lexiassist/services/content/internal/handler"
@@ -59,12 +61,24 @@ func main() {
 	quizRepo := repository.NewQuizRepository(db)
 	flashcardRepo := repository.NewFlashcardRepository(db)
 
+	// Initialize MinIO client
+	minioClient, err := minio.New(cfg.MinIOEndpoint, &minio.Options{
+		Creds:  credentials.NewStaticV4(cfg.MinIOAccessKey, cfg.MinIOSecretKey, ""),
+		Secure: cfg.MinIOUseSSL,
+	})
+	if err != nil {
+		logger.Fatal("failed to initialize MinIO client", zap.Error(err))
+	}
+	logger.Info("MinIO client initialized", zap.String("endpoint", cfg.MinIOEndpoint), zap.String("bucket", cfg.MinIOBucket))
+
 	// Initialize services
 	contentService := service.NewContentService(
 		courseRepo,
 		materialRepo,
 		quizRepo,
 		flashcardRepo,
+		minioClient,
+		cfg.MinIOBucket,
 	)
 
 	// Initialize handlers
@@ -111,6 +125,7 @@ func main() {
 		api.GET("/materials/:id", materialHandler.GetMaterial)
 		api.PUT("/materials/:id", materialHandler.UpdateMaterial)
 		api.DELETE("/materials/:id", materialHandler.DeleteMaterial)
+		api.POST("/materials/:id/presign", materialHandler.PresignMaterial)
 
 		// Quizzes
 		api.POST("/quizzes", quizHandler.CreateQuiz)

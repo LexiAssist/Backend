@@ -5,8 +5,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/minio/minio-go/v7"
 
 	"lexiassist/services/content/internal/model"
 	"lexiassist/services/content/internal/repository"
@@ -37,6 +39,7 @@ type ContentService interface {
 	GetCourseMaterials(ctx context.Context, userID uuid.UUID, courseID uuid.UUID) ([]model.Material, error)
 	UpdateMaterial(ctx context.Context, userID uuid.UUID, materialID uuid.UUID, req *UpdateMaterialRequest) (*model.Material, error)
 	DeleteMaterial(ctx context.Context, userID uuid.UUID, materialID uuid.UUID) error
+	GeneratePresignURL(ctx context.Context, userID uuid.UUID, materialID uuid.UUID, action string) (*PresignResponse, error)
 
 	// Quiz operations
 	CreateQuiz(ctx context.Context, userID uuid.UUID, req *CreateQuizRequest) (*model.Quiz, error)
@@ -64,12 +67,21 @@ type ContentService interface {
 	DeleteFlashcard(ctx context.Context, userID uuid.UUID, cardID uuid.UUID) error
 }
 
+// PresignResponse holds the generated presigned URL.
+type PresignResponse struct {
+	URL         string `json:"url"`
+	MaterialID  string `json:"material_id"`
+	ExpiresAt   int64  `json:"expires_at"`
+}
+
 // contentService implements ContentService.
 type contentService struct {
 	courseRepo    repository.CourseRepository
 	materialRepo  repository.MaterialRepository
 	quizRepo      repository.QuizRepository
 	flashcardRepo repository.FlashcardRepository
+	minioClient   *minio.Client
+	minioBucket   string
 }
 
 // NewContentService creates a new content service.
@@ -78,12 +90,16 @@ func NewContentService(
 	materialRepo repository.MaterialRepository,
 	quizRepo repository.QuizRepository,
 	flashcardRepo repository.FlashcardRepository,
+	minioClient *minio.Client,
+	minioBucket string,
 ) ContentService {
 	return &contentService{
 		courseRepo:    courseRepo,
 		materialRepo:  materialRepo,
 		quizRepo:      quizRepo,
 		flashcardRepo: flashcardRepo,
+		minioClient:   minioClient,
+		minioBucket:   minioBucket,
 	}
 }
 
@@ -326,6 +342,35 @@ func (s *contentService) DeleteMaterial(ctx context.Context, userID uuid.UUID, m
 		return err
 	}
 	return s.materialRepo.Delete(ctx, materialID)
+}
+
+// GeneratePresignURL generates a presigned URL for uploading a file to MinIO.
+func (s *contentService) GeneratePresignURL(ctx context.Context, userID uuid.UUID, materialID uuid.UUID, action string) (*PresignResponse, error) {
+	// Verify the material exists and belongs to the user
+	_, err := s.GetMaterial(ctx, userID, materialID)
+	if err != nil {
+		return nil, err
+	}
+
+	if s.minioClient == nil {
+		return nil, fmt.Errorf("minio client not initialized")
+	}
+
+	// Build object name: materials/{user_id}/{material_id}
+	objectName := fmt.Sprintf("materials/%s/%s", userID.String(), materialID.String())
+
+	// Generate presigned PUT URL (valid for 15 minutes)
+	expiry := 15 * time.Minute
+	presignedURL, err := s.minioClient.PresignedPutObject(ctx, s.minioBucket, objectName, expiry)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate presigned URL: %w", err)
+	}
+
+	return &PresignResponse{
+		URL:        presignedURL.String(),
+		MaterialID: materialID.String(),
+		ExpiresAt:  time.Now().Add(expiry).Unix(),
+	}, nil
 }
 
 // ==================== Quiz Operations ====================

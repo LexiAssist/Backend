@@ -23,6 +23,13 @@ type Config struct {
 	MaxUploadSizeMB int
 	DefaultPageSize int
 	MaxPageSize     int
+
+	// MinIO / S3-compatible storage
+	MinIOEndpoint  string
+	MinIOAccessKey string
+	MinIOSecretKey string
+	MinIOBucket    string
+	MinIOUseSSL    bool
 }
 
 // Load loads configuration from environment variables.
@@ -43,6 +50,13 @@ func Load() *Config {
 		MaxUploadSizeMB: getEnvAsInt("MAX_UPLOAD_SIZE_MB", 50),
 		DefaultPageSize: getEnvAsInt("DEFAULT_PAGE_SIZE", 20),
 		MaxPageSize:     getEnvAsInt("MAX_PAGE_SIZE", 100),
+
+		// MinIO / S3-compatible storage
+		MinIOEndpoint:  getEnv("MINIO_ENDPOINT", "localhost:9000"),
+		MinIOAccessKey: getEnv("MINIO_ACCESS_KEY", "minioadmin"),
+		MinIOSecretKey: getEnv("MINIO_SECRET_KEY", "minioadmin_secret"),
+		MinIOBucket:    getEnv("MINIO_BUCKET", "lexiassist-materials"),
+		MinIOUseSSL:    getEnv("MINIO_USE_SSL", "false") == "true",
 	}
 }
 

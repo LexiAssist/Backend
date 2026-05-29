@@ -193,3 +193,37 @@ func (h *MaterialHandler) DeleteMaterial(c echo.Context) error {
 
 	return c.NoContent(http.StatusNoContent)
 }
+
+// PresignMaterial handles POST /api/v1/materials/:id/presign
+func (h *MaterialHandler) PresignMaterial(c echo.Context) error {
+	userID, err := getUserID(c)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusUnauthorized, "unauthorized")
+	}
+
+	materialID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid material ID")
+	}
+
+	var req struct {
+		Action string `json:"action"`
+	}
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+
+	presignResp, err := h.service.GeneratePresignURL(c.Request().Context(), userID, materialID, req.Action)
+	if err != nil {
+		if err == service.ErrMaterialNotFound {
+			return echo.NewHTTPError(http.StatusNotFound, "material not found")
+		}
+		if err == service.ErrUnauthorized {
+			return echo.NewHTTPError(http.StatusForbidden, "access denied")
+		}
+		logger.Error("failed to generate presign URL", zap.Error(err))
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to generate presign URL")
+	}
+
+	return c.JSON(http.StatusOK, Response{Data: presignResp})
+}
