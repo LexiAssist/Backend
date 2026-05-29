@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 	
-	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
 	"go.uber.org/zap"
 	
@@ -130,110 +129,6 @@ func (p *ReverseProxy) doProxyRequest(ctx context.Context, c echo.Context, targe
 		return fmt.Errorf("failed to copy response body: %w", err)
 	}
 	
-	return nil
-}
-
-// ProxyWebSocket proxies a WebSocket connection to the target service.
-func (p *ReverseProxy) ProxyWebSocket(c echo.Context, targetURL string, injectUserID bool) error {
-	// Parse target URL and switch to ws:// or wss://
-	target, err := url.Parse(targetURL)
-	if err != nil {
-		return fmt.Errorf("invalid target URL: %w", err)
-	}
-	switch target.Scheme {
-	case "http":
-		target.Scheme = "ws"
-	case "https":
-		target.Scheme = "wss"
-	}
-
-	// Build dialer with same timeout as HTTP client
-	dialer := websocket.Dialer{
-		HandshakeTimeout: 30 * time.Second,
-	}
-
-	// Prepare headers to forward
-	headers := http.Header{}
-	for key, values := range c.Request().Header {
-		for _, value := range values {
-			headers.Add(key, value)
-		}
-	}
-
-	// Inject X-User-ID header if authenticated
-	if injectUserID {
-		if userID := c.Get("user_id"); userID != nil {
-			headers.Set("X-User-ID", userID.(string))
-		}
-	}
-
-	// Forward correlation ID
-	if correlationID := c.Request().Header.Get("X-Correlation-ID"); correlationID != "" {
-		headers.Set("X-Correlation-ID", correlationID)
-	}
-
-	// Inject internal API key
-	headers.Set("X-Internal-Key", p.internalAPIKey)
-
-	// Copy query parameters
-	if c.Request().URL.RawQuery != "" {
-		target.RawQuery = c.Request().URL.RawQuery
-	}
-
-	// Dial upstream
-	upstreamConn, resp, err := dialer.Dial(target.String(), headers)
-	if err != nil {
-		if resp != nil {
-			return echo.NewHTTPError(resp.StatusCode, "upstream WebSocket connection failed")
-		}
-		return echo.NewHTTPError(http.StatusBadGateway, "upstream WebSocket connection failed")
-	}
-	defer upstreamConn.Close()
-
-	// Upgrade client connection
-	upgrader := websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool { return true },
-	}
-
-	clientConn, err := upgrader.Upgrade(c.Response(), c.Request(), nil)
-	if err != nil {
-		return fmt.Errorf("failed to upgrade client connection: %w", err)
-	}
-	defer clientConn.Close()
-
-	// Copy messages bidirectionally
-	errChan := make(chan error, 2)
-
-	go func() {
-		for {
-			msgType, msg, err := upstreamConn.ReadMessage()
-			if err != nil {
-				errChan <- err
-				return
-			}
-			if err := clientConn.WriteMessage(msgType, msg); err != nil {
-				errChan <- err
-				return
-			}
-		}
-	}()
-
-	go func() {
-		for {
-			msgType, msg, err := clientConn.ReadMessage()
-			if err != nil {
-				errChan <- err
-				return
-			}
-			if err := upstreamConn.WriteMessage(msgType, msg); err != nil {
-				errChan <- err
-				return
-			}
-		}
-	}()
-
-	// Block until one side closes
-	<-errChan
 	return nil
 }
 

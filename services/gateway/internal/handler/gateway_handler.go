@@ -267,6 +267,6 @@ func (h *GatewayHandler) ProxyToAudioService(c echo.Context) error {
 // ProxyWebSocketToSyncService proxies WebSocket connections to Sync Service.
 func (h *GatewayHandler) ProxyWebSocketToSyncService(c echo.Context) error {
 	targetURL := h.config.SyncServiceURL
-	// Use dedicated WebSocket proxy to handle upgrade framing
-	return h.proxy.ProxyWebSocket(c, targetURL+"/api/v1/ws", true)
+	// WebSocket upgrade is handled by the sync service
+	return h.proxy.ProxyRequest(c, targetURL+"/api/v1/sync", "sync", true)
 }

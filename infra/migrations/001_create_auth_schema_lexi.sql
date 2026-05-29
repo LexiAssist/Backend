@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS lexi_auth.refresh_tokens (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL REFERENCES lexi_auth.users(id) ON DELETE CASCADE,
     token_hash VARCHAR(255) NOT NULL,
-    device_info JSONB, -- JSON with device name, OS, browser
+    device_info TEXT, -- JSON with device name, OS, browser
     ip_address INET,
     issued_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
@@ -127,34 +127,6 @@ CREATE TRIGGER update_users_updated_at
     BEFORE UPDATE ON lexi_auth.users
     FOR EACH ROW
     EXECUTE FUNCTION lexi_auth.update_updated_at_column();
-
--- Auto-create notification preferences when a new user registers
-CREATE OR REPLACE FUNCTION lexi_auth.create_default_notification_preferences()
-RETURNS TRIGGER AS $$
-BEGIN
-    INSERT INTO lexi_notification.preferences (
-        user_id, push_enabled, email_enabled, email_frequency,
-        quiet_hours_start, quiet_hours_end, timezone,
-        notify_on_quiz_completion, notify_on_streak_achievement,
-        notify_on_goal_completion, notify_on_material_processed,
-        notify_on_study_reminder
-    ) VALUES (
-        NEW.id, true, true, 'immediate',
-        22, 8, COALESCE(NEW.timezone, 'UTC'),
-        true, true, true, true, true
-    );
-    RETURN NEW;
-EXCEPTION WHEN OTHERS THEN
-    -- Don't fail registration if preferences insert fails
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS trg_create_user_preferences ON lexi_auth.users;
-CREATE TRIGGER trg_create_user_preferences
-    AFTER INSERT ON lexi_auth.users
-    FOR EACH ROW
-    EXECUTE FUNCTION lexi_auth.create_default_notification_preferences();
 
 -- Cleanup old blacklisted tokens (run periodically)
 CREATE OR REPLACE FUNCTION lexi_auth.cleanup_expired_blacklisted_tokens()

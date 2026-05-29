@@ -4,7 +4,7 @@ package model
 import (
 	"database/sql/driver"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -132,14 +132,9 @@ func (di *DeviceInfo) Scan(value interface{}) error {
 	if value == nil {
 		return nil
 	}
-	var bytes []byte
-	switch v := value.(type) {
-	case []byte:
-		bytes = v
-	case string:
-		bytes = []byte(v)
-	default:
-		return fmt.Errorf("cannot scan type %T into DeviceInfo", value)
+	bytes, ok := value.([]byte)
+	if !ok {
+		return errors.New("type assertion to []byte failed")
 	}
 	return json.Unmarshal(bytes, di)
 }

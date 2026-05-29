@@ -2,12 +2,12 @@
 -- This migration sets up tables for courses, materials, quizzes, and flashcards
 
 -- Create content schema
-CREATE SCHEMA IF NOT EXISTS lexi_content;
+CREATE SCHEMA IF NOT EXISTS content;
 
 -- Courses table
 CREATE TABLE IF NOT EXISTS lexi_content.courses (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id UUID NOT NULL REFERENCES lexi_auth.users(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
     name VARCHAR(255) NOT NULL,
     description TEXT,
     color VARCHAR(7) DEFAULT '#3B82F6',
@@ -26,7 +26,7 @@ CREATE INDEX IF NOT EXISTS idx_courses_deleted_at ON lexi_content.courses(delete
 -- Materials (files) table
 CREATE TABLE IF NOT EXISTS lexi_content.materials (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id UUID NOT NULL REFERENCES lexi_auth.users(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
     course_id UUID REFERENCES lexi_content.courses(id) ON DELETE SET NULL,
     title VARCHAR(255) NOT NULL,
     file_url VARCHAR(500),
@@ -49,7 +49,7 @@ CREATE INDEX IF NOT EXISTS idx_materials_deleted_at ON lexi_content.materials(de
 -- Quizzes table
 CREATE TABLE IF NOT EXISTS lexi_content.quizzes (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id UUID NOT NULL REFERENCES lexi_auth.users(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
     course_id UUID REFERENCES lexi_content.courses(id) ON DELETE CASCADE,
     material_id UUID REFERENCES lexi_content.materials(id) ON DELETE SET NULL,
     title VARCHAR(255) NOT NULL,
@@ -91,7 +91,7 @@ CREATE INDEX IF NOT EXISTS idx_quiz_questions_order_index ON lexi_content.quiz_q
 -- Flashcard decks table
 CREATE TABLE IF NOT EXISTS lexi_content.flashcard_decks (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id UUID NOT NULL REFERENCES lexi_auth.users(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
     course_id UUID REFERENCES lexi_content.courses(id) ON DELETE CASCADE,
     material_id UUID REFERENCES lexi_content.materials(id) ON DELETE SET NULL,
     title VARCHAR(255) NOT NULL,

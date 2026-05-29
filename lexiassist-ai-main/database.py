@@ -88,11 +88,3 @@ def get_db():
         yield db
     finally:
         db.close()
-
-def init_db():
-    """Initialize database schema and tables."""
-    from sqlalchemy import text
-    with engine.connect() as conn:
-        conn.execute(text("CREATE SCHEMA IF NOT EXISTS ai"))
-        conn.commit()
-    Base.metadata.create_all(bind=engine)
