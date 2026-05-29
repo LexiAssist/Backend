@@ -12,22 +12,26 @@ import (
 // AuthRequired returns a Gin middleware that validates JWT tokens.
 func AuthRequired() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		var tokenString string
 		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header required"})
-			c.Abort()
-			return
+		if authHeader != "" {
+			// Extract Bearer token
+			parts := strings.SplitN(authHeader, " ", 2)
+			if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid authorization format"})
+				c.Abort()
+				return
+			}
+			tokenString = parts[1]
+		} else {
+			// Fallback to query param for WebSocket auth
+			tokenString = c.Query("token")
+			if tokenString == "" {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header required"})
+				c.Abort()
+				return
+			}
 		}
-
-		// Extract Bearer token
-		parts := strings.SplitN(authHeader, " ", 2)
-		if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid authorization format"})
-			c.Abort()
-			return
-		}
-
-		tokenString := parts[1]
 
 		// Parse token without validation (gateway handles validation)
 		// This just extracts the user_id claim for the service to use

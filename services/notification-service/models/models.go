@@ -1,10 +1,43 @@
 package models
 
 import (
+	"database/sql/driver"
+	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+// JSONB is a PostgreSQL JSONB-compatible type that implements driver.Valuer
+// and sql.Scanner so sqlx can bind it to JSONB columns.
+type JSONB map[string]interface{}
+
+// Value implements the driver.Valuer interface.
+func (j JSONB) Value() (driver.Value, error) {
+	if j == nil {
+		return nil, nil
+	}
+	return json.Marshal(j)
+}
+
+// Scan implements the sql.Scanner interface.
+func (j *JSONB) Scan(value interface{}) error {
+	if value == nil {
+		*j = nil
+		return nil
+	}
+	var bytes []byte
+	switch v := value.(type) {
+	case []byte:
+		bytes = v
+	case string:
+		bytes = []byte(v)
+	default:
+		return fmt.Errorf("cannot scan type %T into JSONB", value)
+	}
+	return json.Unmarshal(bytes, j)
+}
 
 // NotificationPreferences represents user notification settings
 type NotificationPreferences struct {
@@ -34,7 +67,7 @@ type NotificationQueue struct {
 	Channel      string          `db:"channel" json:"channel"`
 	Title        string          `db:"title" json:"title"`
 	Body         string          `db:"body" json:"body"`
-	Data         map[string]interface{} `db:"data" json:"data"`
+	Data         JSONB `db:"data" json:"data"`
 	DeviceToken  *string         `db:"device_token" json:"device_token,omitempty"`
 	EmailAddress *string         `db:"email_address" json:"email_address,omitempty"`
 	ScheduledAt  *time.Time      `db:"scheduled_at" json:"scheduled_at,omitempty"`
@@ -53,7 +86,7 @@ type NotificationHistory struct {
 	Channel      string          `db:"channel" json:"channel"`
 	Title        string          `db:"title" json:"title"`
 	Body         string          `db:"body" json:"body"`
-	Data         map[string]interface{} `db:"data" json:"data"`
+	Data         JSONB `db:"data" json:"data"`
 	SentAt       time.Time       `db:"sent_at" json:"sent_at"`
 	DeliveredAt  *time.Time      `db:"delivered_at" json:"delivered_at,omitempty"`
 	OpenedAt     *time.Time      `db:"opened_at" json:"opened_at,omitempty"`
@@ -107,7 +140,7 @@ type SendNotificationRequest struct {
 	Type      string                 `json:"type" binding:"required"` // push, email
 	Title     string                 `json:"title" binding:"required"`
 	Body      string                 `json:"body" binding:"required"`
-	Data      map[string]interface{} `json:"data,omitempty"`
+	Data      JSONB `json:"data,omitempty"`
 	Scheduled *time.Time             `json:"scheduled,omitempty"`
 }
 
@@ -129,7 +162,7 @@ type NotificationEvent struct {
 	UserID      uuid.UUID              `json:"user_id"`
 	Title       string                 `json:"title"`
 	Body        string                 `json:"body"`
-	Data        map[string]interface{} `json:"data,omitempty"`
+	Data        JSONB `json:"data,omitempty"`
 }
 
 // Constants for notification types

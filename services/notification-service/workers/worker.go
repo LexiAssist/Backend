@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/lib/pq"
 	"lexiassist/shared/pkg/logger"
 
 	"lexiassist/services/notification-service/models"
@@ -97,17 +98,20 @@ func (w *Worker) processPendingNotifications() {
 func (w *Worker) processNotification(ctx context.Context, n *models.NotificationQueue) {
 	// Get user preferences and email
 	var prefs struct {
-		PushEnabled  bool   `db:"push_enabled"`
-		EmailEnabled bool   `db:"email_enabled"`
-		UserEmail    string `db:"user_email"`
-		Tokens       []string `db:"push_device_tokens"`
+		PushEnabled  bool           `db:"push_enabled"`
+		EmailEnabled bool           `db:"email_enabled"`
+		UserEmail    string         `db:"user_email"`
+		Tokens       pq.StringArray `db:"push_device_tokens"`
 	}
 
 	err := w.db.Get(&prefs, `
-		SELECT p.push_enabled, p.email_enabled, u.email as user_email, p.push_device_tokens
-		FROM lexi_notification.preferences p
-		JOIN lexi_auth.users u ON p.user_id = u.id
-		WHERE p.user_id = $1`, n.UserID)
+		SELECT COALESCE(p.push_enabled, true) as push_enabled,
+		       COALESCE(p.email_enabled, true) as email_enabled,
+		       u.email as user_email,
+		       COALESCE(p.push_device_tokens, ARRAY[]::text[]) as push_device_tokens
+		FROM lexi_auth.users u
+		LEFT JOIN lexi_notification.preferences p ON p.user_id = u.id
+		WHERE u.id = $1`, n.UserID)
 
 	if err != nil {
 		logger.Error(fmt.Sprintf("Failed to get user preferences for notification %s: %v", n.ID, err))
@@ -151,7 +155,7 @@ func (w *Worker) sendPushNotification(ctx context.Context, n *models.Notificatio
 
 	// Send to all device tokens
 	for _, token := range tokens {
-		err := w.fcmService.SendNotification(ctx, token, n.Title, n.Body, n.Data)
+		err := w.fcmService.SendNotification(ctx, token, n.Title, n.Body, map[string]interface{}(n.Data))
 		if err != nil {
 			if err.Error() == "invalid_token" {
 				// Remove invalid token
@@ -283,7 +287,7 @@ func (w *Worker) processReminder(r *models.ScheduledReminder) {
 		Channel:     models.ChannelFCM,
 		Title:       r.Title,
 		Body:        r.Body,
-		Data: map[string]interface{}{
+		Data: models.JSONB{
 			"reminder_id": r.ID.String(),
 			"reminder_type": r.Type,
 			"entity_type": r.EntityType,
