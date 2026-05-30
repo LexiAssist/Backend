@@ -74,7 +74,7 @@ func Load() (*Config, error) {
 		IngestionServiceURL:     getEnv("INGESTION_SERVICE_URL", "http://localhost:5002"),
 		AIServiceURL:            getEnv("AI_SERVICE_URL", "http://localhost:8000"),
 		AIServiceTimeout:        getEnvDuration("AI_SERVICE_TIMEOUT", 120*time.Second),
-		InternalAPIKey:          getEnv("INTERNAL_API_KEY", "dev-internal-key-change-in-production"),
+		InternalAPIKey:          getEnv("INTERNAL_API_KEY", "dev-internal-key"),
 	}
 	
 	return cfg, nil
