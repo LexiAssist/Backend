@@ -2,7 +2,7 @@
 -- This migration sets up tables for quiz tracking, study sessions, and learning analytics
 
 -- Create analytics schema
-CREATE SCHEMA IF NOT EXISTS analytics;
+CREATE SCHEMA IF NOT EXISTS lexi_analytics;
 
 -- Quiz attempts and results
 CREATE TABLE IF NOT EXISTS lexi_analytics.quiz_attempts (
