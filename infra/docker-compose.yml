@@ -124,6 +124,7 @@ services:
       - PORT=8083
       - DATABASE_URL=postgresql://lexiassist:lexiassist_secret@postgres:5432/lexiassist?sslmode=disable
       - REDIS_URL=redis:6379
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY:-dev-internal-key}
     ports:
       - "8083:8083"
     depends_on:
@@ -191,6 +192,7 @@ services:
       - PORT=8085
       - DATABASE_URL=postgresql://lexiassist:lexiassist_secret@postgres:5432/lexiassist?sslmode=disable
       - REDIS_URL=redis:6379
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY:-dev-internal-key}
     ports:
       - "8085:8085"
     depends_on:
@@ -374,7 +376,6 @@ services:
       - PORT=5004
       - INTERNAL_API_KEY=${INTERNAL_API_KEY:-dev-internal-key}
       - LOG_LEVEL=info
-      - INTERNAL_API_KEY=${INTERNAL_API_KEY:-dev-internal-key}
     ports:
       - "5004:5004"
     networks:

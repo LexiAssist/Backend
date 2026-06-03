@@ -141,9 +141,23 @@ func (p *ReverseProxy) doProxyRequest(ctx context.Context, c echo.Context, targe
 
 // ProxyWebSocket proxies a WebSocket connection to the target service.
 func (p *ReverseProxy) ProxyWebSocket(c echo.Context, targetURL string, injectUserID bool) error {
+	correlationID := c.Request().Header.Get("X-Correlation-ID")
+
+	logger.Info("[WS] ProxyWebSocket called",
+		zap.String("target_url", targetURL),
+		zap.String("client_remote_addr", c.Request().RemoteAddr),
+		zap.String("request_path", c.Request().URL.Path),
+		zap.String("raw_query", c.Request().URL.RawQuery),
+		zap.String("correlation_id", correlationID),
+	)
+
 	// Parse target URL and switch to ws:// or wss://
 	target, err := url.Parse(targetURL)
 	if err != nil {
+		logger.Error("[WS] failed to parse target URL",
+			zap.String("target_url", targetURL),
+			zap.Error(err),
+		)
 		return fmt.Errorf("invalid target URL: %w", err)
 	}
 	switch target.Scheme {
@@ -152,6 +166,11 @@ func (p *ReverseProxy) ProxyWebSocket(c echo.Context, targetURL string, injectUs
 	case "https":
 		target.Scheme = "wss"
 	}
+
+	logger.Info("[WS] resolved upstream target",
+		zap.String("upstream_ws_url", target.String()),
+		zap.String("correlation_id", correlationID),
+	)
 
 	// Build dialer with same timeout as HTTP client
 	dialer := websocket.Dialer{
@@ -168,6 +187,10 @@ func (p *ReverseProxy) ProxyWebSocket(c echo.Context, targetURL string, injectUs
 			canonicalKey == "Sec-Websocket-Key" ||
 			canonicalKey == "Sec-Websocket-Version" ||
 			canonicalKey == "Sec-Websocket-Extensions" {
+			logger.Debug("[WS] skipping hop-by-hop header",
+				zap.String("header", canonicalKey),
+				zap.String("correlation_id", correlationID),
+			)
 			continue
 		}
 		for _, value := range values {
@@ -179,11 +202,19 @@ func (p *ReverseProxy) ProxyWebSocket(c echo.Context, targetURL string, injectUs
 	if injectUserID {
 		if userID := c.Get("user_id"); userID != nil {
 			headers.Set("X-User-ID", userID.(string))
+			logger.Debug("[WS] injected X-User-ID",
+				zap.String("user_id", userID.(string)),
+				zap.String("correlation_id", correlationID),
+			)
+		} else {
+			logger.Warn("[WS] injectUserID=true but user_id not found in context",
+				zap.String("correlation_id", correlationID),
+			)
 		}
 	}
 
 	// Forward correlation ID
-	if correlationID := c.Request().Header.Get("X-Correlation-ID"); correlationID != "" {
+	if correlationID != "" {
 		headers.Set("X-Correlation-ID", correlationID)
 	}
 
@@ -195,26 +226,76 @@ func (p *ReverseProxy) ProxyWebSocket(c echo.Context, targetURL string, injectUs
 		target.RawQuery = c.Request().URL.RawQuery
 	}
 
+	// Log the final headers being sent upstream (redact sensitive values)
+	logger.Debug("[WS] forwarding headers to upstream",
+		zap.Strings("header_keys", func() []string {
+			keys := make([]string, 0, len(headers))
+			for k := range headers {
+				keys = append(keys, k)
+			}
+			return keys
+		}()),
+		zap.String("correlation_id", correlationID),
+	)
+
 	// Dial upstream
-	upstreamConn, resp, err := dialer.Dial(target.String(), headers)
+	logger.Info("[WS] dialing upstream",
+		zap.String("upstream_ws_url", target.String()),
+		zap.String("correlation_id", correlationID),
+	)
+	upstreamConn, dialResp, err := dialer.Dial(target.String(), headers)
 	if err != nil {
-		if resp != nil {
-			return echo.NewHTTPError(resp.StatusCode, "upstream WebSocket connection failed")
+		if dialResp != nil {
+			body, _ := io.ReadAll(dialResp.Body)
+			dialResp.Body.Close()
+			logger.Error("[WS] upstream dial failed with HTTP response",
+				zap.String("upstream_ws_url", target.String()),
+				zap.Int("status_code", dialResp.StatusCode),
+				zap.String("response_body", string(body)),
+				zap.String("correlation_id", correlationID),
+				zap.Error(err),
+			)
+			return echo.NewHTTPError(dialResp.StatusCode, fmt.Sprintf("upstream WebSocket connection failed: %s", string(body)))
 		}
-		return echo.NewHTTPError(http.StatusBadGateway, "upstream WebSocket connection failed")
+		logger.Error("[WS] upstream dial failed with no HTTP response (network/timeout)",
+			zap.String("upstream_ws_url", target.String()),
+			zap.String("correlation_id", correlationID),
+			zap.Error(err),
+		)
+		return echo.NewHTTPError(http.StatusBadGateway, fmt.Sprintf("upstream WebSocket connection failed: %v", err))
 	}
 	defer upstreamConn.Close()
+
+	logger.Info("[WS] upstream dial succeeded",
+		zap.String("upstream_ws_url", target.String()),
+		zap.String("correlation_id", correlationID),
+	)
 
 	// Upgrade client connection
 	upgrader := websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool { return true },
 	}
 
+	logger.Info("[WS] upgrading client connection",
+		zap.String("client_remote_addr", c.Request().RemoteAddr),
+		zap.String("correlation_id", correlationID),
+	)
 	clientConn, err := upgrader.Upgrade(c.Response(), c.Request(), nil)
 	if err != nil {
+		logger.Error("[WS] failed to upgrade client connection",
+			zap.String("client_remote_addr", c.Request().RemoteAddr),
+			zap.String("correlation_id", correlationID),
+			zap.Error(err),
+		)
 		return fmt.Errorf("failed to upgrade client connection: %w", err)
 	}
 	defer clientConn.Close()
+
+	logger.Info("[WS] tunnel established — starting bidirectional copy",
+		zap.String("client_remote_addr", c.Request().RemoteAddr),
+		zap.String("upstream", target.String()),
+		zap.String("correlation_id", correlationID),
+	)
 
 	// Copy messages bidirectionally
 	errChan := make(chan error, 2)
@@ -223,10 +304,18 @@ func (p *ReverseProxy) ProxyWebSocket(c echo.Context, targetURL string, injectUs
 		for {
 			msgType, msg, err := upstreamConn.ReadMessage()
 			if err != nil {
+				logger.Warn("[WS] upstream→client copy stopped",
+					zap.String("correlation_id", correlationID),
+					zap.Error(err),
+				)
 				errChan <- err
 				return
 			}
 			if err := clientConn.WriteMessage(msgType, msg); err != nil {
+				logger.Warn("[WS] upstream→client write failed",
+					zap.String("correlation_id", correlationID),
+					zap.Error(err),
+				)
 				errChan <- err
 				return
 			}
@@ -237,10 +326,18 @@ func (p *ReverseProxy) ProxyWebSocket(c echo.Context, targetURL string, injectUs
 		for {
 			msgType, msg, err := clientConn.ReadMessage()
 			if err != nil {
+				logger.Warn("[WS] client→upstream copy stopped",
+					zap.String("correlation_id", correlationID),
+					zap.Error(err),
+				)
 				errChan <- err
 				return
 			}
 			if err := upstreamConn.WriteMessage(msgType, msg); err != nil {
+				logger.Warn("[WS] client→upstream write failed",
+					zap.String("correlation_id", correlationID),
+					zap.Error(err),
+				)
 				errChan <- err
 				return
 			}
@@ -248,7 +345,13 @@ func (p *ReverseProxy) ProxyWebSocket(c echo.Context, targetURL string, injectUs
 	}()
 
 	// Block until one side closes
-	<-errChan
+	closeErr := <-errChan
+	logger.Info("[WS] tunnel closed",
+		zap.String("client_remote_addr", c.Request().RemoteAddr),
+		zap.String("upstream", target.String()),
+		zap.String("correlation_id", correlationID),
+		zap.NamedError("close_reason", closeErr),
+	)
 	return nil
 }
 
