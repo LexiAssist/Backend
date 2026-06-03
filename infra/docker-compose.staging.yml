@@ -1,15 +1,15 @@
 services:
   gateway:
     environment:
-      - ALLOWED_ORIGINS=https://staging.lexiassist.app
+      - ALLOWED_ORIGINS=https://study.staging.lexiassist.app
       - ENVIRONMENT=staging
 
   ai-orchestrator:
     environment:
-      - ALLOWED_ORIGINS=https://staging.lexiassist.app
+      - ALLOWED_ORIGINS=https://study.staging.lexiassist.app
       - ENVIRONMENT=staging
 
   evaluation-service:
     environment:
-      - ALLOWED_ORIGINS=https://staging.lexiassist.app
+      - ALLOWED_ORIGINS=https://study.staging.lexiassist.app
       - ENVIRONMENT=staging

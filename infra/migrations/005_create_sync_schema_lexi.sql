@@ -2,7 +2,7 @@
 -- This migration sets up tables for real-time synchronization
 
 -- Create sync schema
-CREATE SCHEMA IF NOT EXISTS sync;
+CREATE SCHEMA IF NOT EXISTS lexi_sync;
 
 -- WebSocket connections (active sessions)
 CREATE TABLE IF NOT EXISTS lexi_sync.connections (
