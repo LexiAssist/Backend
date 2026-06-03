@@ -80,7 +80,13 @@ func (p *ReverseProxy) doProxyRequest(ctx context.Context, c echo.Context, targe
 	// Update URL to point to target
 	req.URL.Scheme = target.Scheme
 	req.URL.Host = target.Host
-	req.URL.Path = target.Path + req.URL.Path
+	
+	// Clean up path to prevent double slashes
+	targetPath := target.Path
+	if targetPath == "/" {
+		targetPath = ""
+	}
+	req.URL.Path = targetPath + req.URL.Path
 	req.Host = target.Host
 	
 	// Remove hop-by-hop headers but PRESERVE Content-Type for multipart/form-data
@@ -155,6 +161,15 @@ func (p *ReverseProxy) ProxyWebSocket(c echo.Context, targetURL string, injectUs
 	// Prepare headers to forward
 	headers := http.Header{}
 	for key, values := range c.Request().Header {
+		// Skip connection-specific and WebSocket handshake headers to avoid duplicate header errors in dialer
+		canonicalKey := http.CanonicalHeaderKey(key)
+		if canonicalKey == "Upgrade" ||
+			canonicalKey == "Connection" ||
+			canonicalKey == "Sec-Websocket-Key" ||
+			canonicalKey == "Sec-Websocket-Version" ||
+			canonicalKey == "Sec-Websocket-Extensions" {
+			continue
+		}
 		for _, value := range values {
 			headers.Add(key, value)
 		}

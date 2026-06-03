@@ -45,6 +45,7 @@ MODEL_PRICING = {
     "gemini-2.5-flash-lite": {"input": 0.00010, "output": 0.00040, "description": "Cheapest, fast"},
     "gemini-2.5-flash": {"input": 0.00030, "output": 0.00250, "description": "Balanced"},
     "gemini-2.5-pro": {"input": 0.00125, "output": 0.01000, "description": "Best quality"},
+    "gemini-1.5-flash": {"input": 0.000075, "output": 0.00030, "description": "Legacy Flash"},
 }
 
 DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "gemini-2.5-flash")
@@ -77,7 +78,11 @@ router = ModelRouter()
 _user_costs: Dict[str, List[Dict]] = {}
 
 def _calculate_cost(model_name: str, input_tokens: int, output_tokens: int) -> float:
-    pricing = MODEL_PRICING.get(model_name, MODEL_PRICING[DEFAULT_MODEL])
+    pricing = MODEL_PRICING.get(model_name)
+    if not pricing:
+        # Fallback to default model or gemini-2.5-flash if default model is not configured
+        fallback_model = DEFAULT_MODEL if DEFAULT_MODEL in MODEL_PRICING else "gemini-2.5-flash"
+        pricing = MODEL_PRICING.get(fallback_model, MODEL_PRICING["gemini-2.5-flash"])
     input_cost = (input_tokens / 1000) * pricing["input"]
     output_cost = (output_tokens / 1000) * pricing["output"]
     return input_cost + output_cost
