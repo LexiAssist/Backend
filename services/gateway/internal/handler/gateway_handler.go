@@ -70,6 +70,7 @@ func (h *GatewayHandler) RegisterRoutes(e *echo.Echo) {
 			"/api/v1/auth/forgot-password",
 			"/api/v1/auth/reset-password",
 			"/api/v1/auth/public-key",
+			"/api/v1/ai/languages",
 		}),
 	))
 	protected.Use(h.rateLimiter)

@@ -200,16 +200,20 @@ async def speech_to_text(
         else:
             cleanup_files(input_path)
 
+class TextToSpeechJSONRequest(BaseModel):
+    text: str
+    language: str = "en"
+    slow: bool = False
+
 @app.post("/api/v1/ai/text-to-speech")
-async def text_to_speech(
-    text: str = Form(..., description="Text to convert to speech"),
-    language: str = Form("en", description="Language code (en, es, fr, de, etc.)"),
-    slow: bool = Form(False, description="Slow speech")
-):
+async def text_to_speech(request: TextToSpeechJSONRequest):
     """
     Convert text to speech using Google Text-to-Speech (gTTS).
     Returns MP3 audio file.
     """
+    text = request.text
+    language = request.language
+    slow = request.slow
     output_path = None
     
     try:
@@ -260,9 +264,11 @@ async def text_to_speech_legacy(request: TextToSpeechRequest):
     Legacy endpoint - redirects to new implementation.
     """
     return await text_to_speech(
-        text=request.text,
-        language=request.voice_id[:2] if request.voice_id else "en",
-        slow=request.speed < 1.0
+        TextToSpeechJSONRequest(
+            text=request.text,
+            language=request.voice_id[:2] if request.voice_id else "en",
+            slow=request.speed < 1.0
+        )
     )
 
 @app.get("/api/v1/ai/languages")
