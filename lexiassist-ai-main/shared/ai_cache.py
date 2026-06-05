@@ -25,6 +25,18 @@ def _get_redis():
     return _redis_client if _redis_client is not False else None
 
 
+def _is_empty_result(result: Any) -> bool:
+    """Check if the result is empty or represents a failed/empty generation."""
+    if not result:
+        return True
+    if isinstance(result, dict):
+        # If it's a dictionary, check if the main payload lists are empty
+        for key in ("questions", "flashcards", "vocab_terms"):
+            if key in result and not result[key]:
+                return True
+    return False
+
+
 def ai_cache(namespace: str, ttl: int = 86400):
     """
     Decorator that caches the result of an AI graph invocation in Redis.
@@ -33,7 +45,7 @@ def ai_cache(namespace: str, ttl: int = 86400):
 
     On hit: returns deserialized JSON.
     On miss: executes wrapped function, stores JSON result with expiration, returns it.
-    If Redis is unavailable: fails open (compute and return without caching).
+    If Redis is unavailable or the result is empty: fails open (does not cache).
     """
     def decorator(func: Callable[..., Any]):
         is_async = asyncio.iscoroutinefunction(func)
@@ -55,7 +67,7 @@ def ai_cache(namespace: str, ttl: int = 86400):
 
                 result = await func(*args, **kwargs)
 
-                if r is not None and key is not None:
+                if r is not None and key is not None and not _is_empty_result(result):
                     try:
                         r.setex(key, ttl, json.dumps(result, default=str))
                     except Exception as e:
@@ -80,7 +92,7 @@ def ai_cache(namespace: str, ttl: int = 86400):
 
                 result = func(*args, **kwargs)
 
-                if r is not None and key is not None:
+                if r is not None and key is not None and not _is_empty_result(result):
                     try:
                         r.setex(key, ttl, json.dumps(result, default=str))
                     except Exception as e:
