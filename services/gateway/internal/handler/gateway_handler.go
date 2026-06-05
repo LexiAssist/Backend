@@ -61,7 +61,16 @@ func (h *GatewayHandler) RegisterRoutes(e *echo.Echo) {
 	protected := e.Group("/api/v1")
 	protected.Use(middleware.JWTMiddleware(
 		h.jwtValidator,
-		middleware.PublicKeySkipper([]string{"/api/v1/auth/"}),
+		middleware.PublicKeySkipper([]string{
+			"/api/v1/auth/register",
+			"/api/v1/auth/login",
+			"/api/v1/auth/refresh",
+			"/api/v1/auth/verify-email",
+			"/api/v1/auth/resend-verification",
+			"/api/v1/auth/forgot-password",
+			"/api/v1/auth/reset-password",
+			"/api/v1/auth/public-key",
+		}),
 	))
 	protected.Use(h.rateLimiter)
 	{
