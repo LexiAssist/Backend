@@ -149,16 +149,10 @@ async def transcribe(
             detail="No speech detected in this audio chunk.",
         )
 
-    # Stream the raw transcription token by token as SSE
+    # Stream the raw transcription as SSE
     async def stream_tokens():
-        yield f"event: session\ndata: {sid}\n\n"
-
-        # Stream word by word so the UI feels live
-        words = raw_text.split(" ")
-        for i, word in enumerate(words):
-            token = word if i == 0 else f" {word}"
-            yield f"data: {token}\n\n"
-
+        yield f"event: session\n session_id: {sid}\n\n"
+        yield f"data: {raw_text}\n\n"
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(stream_tokens(), media_type="text/event-stream")
