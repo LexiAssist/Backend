@@ -1,5 +1,6 @@
 # study_tools/quiz_graph.py
 import json
+import logging
 from typing import Literal, TypedDict
 import os
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -7,6 +8,8 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import END, StateGraph
 from dotenv import load_dotenv
 from lexicore import LexiEngine
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()  # Load environment variables from .env file
 GOOGLE_API_KEY= os.getenv("GOOGLE_API_KEY")
@@ -75,16 +78,71 @@ from the following notes. Every question must come strictly from this text:
     response = llm.invoke([system, human])
 
     try:
-        clean = response.content.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
-        questions = json.loads(clean)
-        state["questions"] = [
-            q for q in questions
-            if all(k in q for k in ("question", "options", "correct_answer", "explanation", "topic"))
-            and isinstance(q["options"], dict)
-            and set(q["options"].keys()) == {"A", "B", "C", "D"}
-            and q["correct_answer"] in ("A", "B", "C", "D")
-        ]
-    except json.JSONDecodeError:
+        clean = response.content.strip()
+        if clean.startswith("```json"):
+            clean = clean[7:]
+        elif clean.startswith("```"):
+            clean = clean[3:]
+        if clean.endswith("```"):
+            clean = clean[:-3]
+        clean = clean.strip()
+        
+        parsed = json.loads(clean)
+        if isinstance(parsed, dict) and "questions" in parsed:
+            parsed = parsed["questions"]
+            
+        valid_questions = []
+        if isinstance(parsed, list):
+            for q in parsed:
+                if not isinstance(q, dict):
+                    continue
+                if "question" not in q or "options" not in q:
+                    continue
+                
+                options = q["options"]
+                if not isinstance(options, dict):
+                    continue
+                
+                # Normalize option keys to uppercase
+                normalized_options = {}
+                for k, v in options.items():
+                    normalized_options[str(k).upper()] = str(v)
+                
+                # Ensure options contain A, B, C, D
+                if not all(k in normalized_options for k in ("A", "B", "C", "D")):
+                    logger.warning(f"Multiple choice question missing A, B, C, or D option: {normalized_options.keys()}")
+                    continue
+                
+                correct_ans = str(q.get("correct_answer", "")).upper()
+                if correct_ans not in ("A", "B", "C", "D"):
+                    # Attempt text match
+                    matched = False
+                    for opt_key, opt_val in normalized_options.items():
+                        if opt_val.strip().lower() == correct_ans.strip().lower():
+                            correct_ans = opt_key
+                            matched = True
+                            break
+                    if not matched:
+                        logger.warning(f"Multiple choice correct_answer is invalid: {correct_ans}")
+                        continue
+                
+                explanation = q.get("explanation", "")
+                if not explanation:
+                    explanation = f"The correct answer is {correct_ans}."
+                    
+                topic = q.get("topic", "General")
+                
+                valid_questions.append({
+                    "question": q["question"],
+                    "options": normalized_options,
+                    "correct_answer": correct_ans,
+                    "explanation": explanation,
+                    "topic": topic
+                })
+        state["questions"] = valid_questions
+        logger.info(f"Successfully generated and parsed {len(valid_questions)} multiple choice questions.")
+    except Exception as e:
+        logger.error(f"Error parsing multiple choice quiz JSON: {e}", exc_info=True)
         state["questions"] = []
 
     return state
@@ -135,14 +193,53 @@ from the following notes. Every question must come strictly from this text:
     response = llm.invoke([system, human])
 
     try:
-        clean = response.content.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
-        questions = json.loads(clean)
-        state["questions"] = [
-            q for q in questions
-            if all(k in q for k in ("question", "model_answer", "marking_guide", "marks", "topic"))
-            and isinstance(q["marking_guide"], list)
-        ]
-    except json.JSONDecodeError:
+        clean = response.content.strip()
+        if clean.startswith("```json"):
+            clean = clean[7:]
+        elif clean.startswith("```"):
+            clean = clean[3:]
+        if clean.endswith("```"):
+            clean = clean[:-3]
+        clean = clean.strip()
+        
+        parsed = json.loads(clean)
+        if isinstance(parsed, dict) and "questions" in parsed:
+            parsed = parsed["questions"]
+            
+        valid_questions = []
+        if isinstance(parsed, list):
+            for q in parsed:
+                if not isinstance(q, dict):
+                    continue
+                if "question" not in q or "model_answer" not in q:
+                    continue
+                
+                marking_guide = q.get("marking_guide", [])
+                if not isinstance(marking_guide, list):
+                    if isinstance(marking_guide, str):
+                        marking_guide = [marking_guide]
+                    else:
+                        marking_guide = []
+                
+                marks = q.get("marks", 5)
+                try:
+                    marks = int(marks)
+                except (ValueError, TypeError):
+                    marks = 5
+                    
+                topic = q.get("topic", "General")
+                
+                valid_questions.append({
+                    "question": q["question"],
+                    "model_answer": q["model_answer"],
+                    "marking_guide": marking_guide,
+                    "marks": marks,
+                    "topic": topic
+                })
+        state["questions"] = valid_questions
+        logger.info(f"Successfully generated and parsed {len(valid_questions)} theory questions.")
+    except Exception as e:
+        logger.error(f"Error parsing theory quiz JSON: {e}", exc_info=True)
         state["questions"] = []
 
     return state

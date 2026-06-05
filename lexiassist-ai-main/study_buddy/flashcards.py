@@ -1,5 +1,6 @@
 # study_tools/flashcard_graph.py
 import json
+import logging
 from typing import TypedDict
 import os
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -7,6 +8,8 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import END, StateGraph
 from dotenv import load_dotenv
 from lexicore import LexiEngine
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()  # Load environment variables from .env file
 
@@ -73,14 +76,37 @@ Every flashcard must come strictly from this text:
     response = llm.invoke([system, human])
 
     try:
-        clean = response.content.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
-        cards = json.loads(clean)
-        # Enforce schema — drop any malformed cards
-        state["flashcards"] = [
-            c for c in cards
-            if all(k in c for k in ("front", "back", "topic"))
-        ]
-    except json.JSONDecodeError:
+        clean = response.content.strip()
+        if clean.startswith("```json"):
+            clean = clean[7:]
+        elif clean.startswith("```"):
+            clean = clean[3:]
+        if clean.endswith("```"):
+            clean = clean[:-3]
+        clean = clean.strip()
+        
+        parsed = json.loads(clean)
+        if isinstance(parsed, dict) and "flashcards" in parsed:
+            parsed = parsed["flashcards"]
+            
+        valid_cards = []
+        if isinstance(parsed, list):
+            for c in parsed:
+                if not isinstance(c, dict):
+                    continue
+                if "front" not in c or "back" not in c:
+                    continue
+                
+                topic = c.get("topic", "General")
+                valid_cards.append({
+                    "front": c["front"],
+                    "back": c["back"],
+                    "topic": topic
+                })
+        state["flashcards"] = valid_cards
+        logger.info(f"Successfully generated and parsed {len(valid_cards)} flashcards.")
+    except Exception as e:
+        logger.error(f"Error parsing flashcards JSON: {e}", exc_info=True)
         state["flashcards"] = []
 
     return state
