@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"syscall"
@@ -62,15 +63,25 @@ func main() {
 	flashcardRepo := repository.NewFlashcardRepository(db)
 
 	// Initialize MinIO client
-	minioClient, err := minio.New(cfg.MinIOEndpoint, &minio.Options{
+	endpoint := cfg.MinIOEndpoint
+	useSSL := cfg.MinIOUseSSL
+
+	if cfg.MinIOPublicURL != "" {
+		if u, err := url.Parse(cfg.MinIOPublicURL); err == nil {
+			endpoint = u.Host
+			useSSL = (u.Scheme == "https")
+		}
+	}
+
+	minioClient, err := minio.New(endpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(cfg.MinIOAccessKey, cfg.MinIOSecretKey, ""),
-		Secure: cfg.MinIOUseSSL,
+		Secure: useSSL,
 		Region: "us-east-1",
 	})
 	if err != nil {
 		logger.Fatal("failed to initialize MinIO client", zap.Error(err))
 	}
-	logger.Info("MinIO client initialized", zap.String("endpoint", cfg.MinIOEndpoint), zap.String("bucket", cfg.MinIOBucket))
+	logger.Info("MinIO client initialized", zap.String("endpoint", endpoint), zap.String("bucket", cfg.MinIOBucket))
 
 	// Initialize services
 	contentService := service.NewContentService(
