@@ -89,6 +89,7 @@ services:
       - MINIO_ACCESS_KEY=minioadmin
       - MINIO_SECRET_KEY=minioadmin_secret
       - MINIO_BUCKET=lexiassist-materials
+      - MINIO_PUBLIC_URL=${MINIO_PUBLIC_URL:-}
       - INGESTION_SERVICE_URL=http://ingestion-service:5002
       - REDIS_URL=redis:6379
       - INTERNAL_API_KEY=${INTERNAL_API_KEY:-dev-internal-key}

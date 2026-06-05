@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"time"
 
 	"github.com/google/uuid"
@@ -76,12 +77,13 @@ type PresignResponse struct {
 
 // contentService implements ContentService.
 type contentService struct {
-	courseRepo    repository.CourseRepository
-	materialRepo  repository.MaterialRepository
-	quizRepo      repository.QuizRepository
-	flashcardRepo repository.FlashcardRepository
-	minioClient   *minio.Client
-	minioBucket   string
+	courseRepo     repository.CourseRepository
+	materialRepo   repository.MaterialRepository
+	quizRepo       repository.QuizRepository
+	flashcardRepo  repository.FlashcardRepository
+	minioClient    *minio.Client
+	minioBucket    string
+	minioPublicURL string
 }
 
 // NewContentService creates a new content service.
@@ -92,14 +94,16 @@ func NewContentService(
 	flashcardRepo repository.FlashcardRepository,
 	minioClient *minio.Client,
 	minioBucket string,
+	minioPublicURL string,
 ) ContentService {
 	return &contentService{
-		courseRepo:    courseRepo,
-		materialRepo:  materialRepo,
-		quizRepo:      quizRepo,
-		flashcardRepo: flashcardRepo,
-		minioClient:   minioClient,
-		minioBucket:   minioBucket,
+		courseRepo:     courseRepo,
+		materialRepo:   materialRepo,
+		quizRepo:       quizRepo,
+		flashcardRepo:  flashcardRepo,
+		minioClient:    minioClient,
+		minioBucket:    minioBucket,
+		minioPublicURL: minioPublicURL,
 	}
 }
 
@@ -366,8 +370,18 @@ func (s *contentService) GeneratePresignURL(ctx context.Context, userID uuid.UUI
 		return nil, fmt.Errorf("failed to generate presigned URL: %w", err)
 	}
 
+	urlString := presignedURL.String()
+	if s.minioPublicURL != "" {
+		publicURL, err := url.Parse(s.minioPublicURL)
+		if err == nil {
+			presignedURL.Scheme = publicURL.Scheme
+			presignedURL.Host = publicURL.Host
+			urlString = presignedURL.String()
+		}
+	}
+
 	return &PresignResponse{
-		URL:        presignedURL.String(),
+		URL:        urlString,
 		MaterialID: materialID.String(),
 		ExpiresAt:  time.Now().Add(expiry).Unix(),
 	}, nil

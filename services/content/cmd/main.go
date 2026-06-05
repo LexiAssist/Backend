@@ -80,6 +80,7 @@ func main() {
 		flashcardRepo,
 		minioClient,
 		cfg.MinIOBucket,
+		cfg.MinIOPublicURL,
 	)
 
 	// Initialize handlers

@@ -30,6 +30,7 @@ type Config struct {
 	MinIOSecretKey string
 	MinIOBucket    string
 	MinIOUseSSL    bool
+	MinIOPublicURL string
 }
 
 // Load loads configuration from environment variables.
@@ -57,6 +58,7 @@ func Load() *Config {
 		MinIOSecretKey: getEnv("MINIO_SECRET_KEY", "minioadmin_secret"),
 		MinIOBucket:    getEnv("MINIO_BUCKET", "lexiassist-materials"),
 		MinIOUseSSL:    getEnv("MINIO_USE_SSL", "false") == "true",
+		MinIOPublicURL: getEnv("MINIO_PUBLIC_URL", ""),
 	}
 }
 
