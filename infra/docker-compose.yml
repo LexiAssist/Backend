@@ -155,6 +155,7 @@ services:
       - PORT=8084
       - DATABASE_URL=postgresql://lexiassist:lexiassist_secret@postgres:5432/lexiassist?sslmode=disable
       - REDIS_URL=redis:6379
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY:-dev-internal-key}
       # SMTP Configuration (optional - for email notifications)
       - SMTP_HOST=${SMTP_HOST:-}
       - SMTP_PORT=${SMTP_PORT:-587}
