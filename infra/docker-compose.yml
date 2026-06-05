@@ -237,6 +237,7 @@ services:
       - REDIS_URL=redis:6379
       - INTERNAL_API_KEY=${INTERNAL_API_KEY:-dev-internal-key}
       - JWT_SECRET=${JWT_SECRET:-your-jwt-secret-key-here}
+      - AI_DAILY_QUOTA=${AI_DAILY_QUOTA:-0}
       # AI Monolith Service (FastAPI)
       - AI_SERVICE_URL=http://ai-service:8000
       - AI_SERVICE_TIMEOUT=${AI_SERVICE_TIMEOUT:-120s}
