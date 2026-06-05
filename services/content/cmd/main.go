@@ -83,6 +83,31 @@ func main() {
 	}
 	logger.Info("MinIO client initialized", zap.String("endpoint", endpoint), zap.String("bucket", cfg.MinIOBucket))
 
+	// Ensure the bucket exists (Non-blocking check to prevent startup crash if public DNS is unreachable internally)
+	go func() {
+		ctxBucket, cancelBucket := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancelBucket()
+
+		exists, err := minioClient.BucketExists(ctxBucket, cfg.MinIOBucket)
+		if err != nil {
+			logger.Warn("failed to check if MinIO bucket exists (skipping auto-creation)", zap.Error(err))
+			return
+		}
+		if !exists {
+			logger.Info("MinIO bucket does not exist, creating it", zap.String("bucket", cfg.MinIOBucket))
+			err = minioClient.MakeBucket(ctxBucket, cfg.MinIOBucket, minio.MakeBucketOptions{
+				Region: "us-east-1",
+			})
+			if err != nil {
+				logger.Error("failed to create MinIO bucket", zap.Error(err))
+				return
+			}
+			logger.Info("MinIO bucket created successfully", zap.String("bucket", cfg.MinIOBucket))
+		} else {
+			logger.Info("MinIO bucket already exists", zap.String("bucket", cfg.MinIOBucket))
+		}
+	}()
+
 	// Initialize services
 	contentService := service.NewContentService(
 		courseRepo,
