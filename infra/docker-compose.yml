@@ -297,6 +297,7 @@ services:
       - WEAVIATE_API_KEY=${WEAVIATE_API_KEY:-}
       - COHERE_API_KEY=${COHERE_API_KEY:-}
       - INTERNAL_API_KEY=${INTERNAL_API_KEY:-dev-internal-key}
+      - REDIS_URL=redis://redis:6379
     ports:
       - "8000:8000"
     depends_on:
