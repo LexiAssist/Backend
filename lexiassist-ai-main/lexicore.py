@@ -4,89 +4,70 @@ import google.generativeai as genai
 import argparse
 from pathlib import Path
 import uuid
-
-import weaviate
-from weaviate.classes.config import Configure, DataType, Property
-from weaviate.classes.query import Filter, MetadataQuery
+import logging
+import httpx
 from dotenv import load_dotenv
 load_dotenv()
 
-COLLECTION_NAME = os.getenv("WEAVIATE_COLLECTION", "LexiChunks")
-VECTOR_NAME = os.getenv("WEAVIATE_VECTOR_NAME", "chunk_vector")
-COHERE_MODEL = os.getenv("COHERE_EMBED_MODEL")  # e.g. "embed-multilingual-v3.0"
+from database import SessionLocal, LexiChunk
+
+COHERE_MODEL = os.getenv("COHERE_EMBED_MODEL", "embed-multilingual-v3.0")
+
+logger = logging.getLogger(__name__)
 
 # Lazily initialized after env var validation.
-_wclient = None
-_collection = None
 _model = None
 _initialized = False
 
 
+def _get_cohere_embeddings(texts: list[str], input_type: str = "search_document") -> list[list[float]]:
+    cohere_api_key = os.getenv("COHERE_API_KEY")
+    if not cohere_api_key:
+        raise RuntimeError("Missing env var: COHERE_API_KEY")
+
+    headers = {
+        "Authorization": f"Bearer {cohere_api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "texts": texts,
+        "model": COHERE_MODEL,
+        "input_type": input_type,
+    }
+    try:
+        with httpx.Client(timeout=60.0) as client:
+            resp = client.post("https://api.cohere.ai/v1/embed", json=payload, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+            return data["embeddings"]
+    except Exception as e:
+        logger.error(f"Cohere embedding API call failed: {e}")
+        raise e
+
+
 def _ensure_initialized():
-    """Lazy init — connects to Weaviate and Gemini on first use."""
-    global _wclient, _collection, _model, _initialized
+    """Lazy init — connects to Gemini on first use."""
+    global _model, _initialized
     if _initialized:
         return
     _init_clients()
     _initialized = True
 
 
-
 def _init_clients():
-    global _wclient, _collection, _model, COLLECTION_NAME, VECTOR_NAME, COHERE_MODEL
+    global _model, COHERE_MODEL
 
     gemini_api_key = os.getenv("GEMINI_API_KEY")
-    weaviate_url = os.getenv("WEAVIATE_URL")
-    weaviate_api_key = os.getenv("WEAVIATE_API_KEY")
     cohere_api_key = os.getenv("COHERE_API_KEY")
-    COLLECTION_NAME = os.getenv("WEAVIATE_COLLECTION", COLLECTION_NAME)
-    VECTOR_NAME = os.getenv("WEAVIATE_VECTOR_NAME", VECTOR_NAME)
     COHERE_MODEL = os.getenv("COHERE_EMBED_MODEL", COHERE_MODEL)
+
+    if not gemini_api_key:
+        raise RuntimeError("Missing env var: GEMINI_API_KEY")
+    if not cohere_api_key:
+        raise RuntimeError("Missing env var: COHERE_API_KEY")
 
     genai.configure(api_key=gemini_api_key)
     _model = genai.GenerativeModel("gemini-2.5-flash")
-
-    headers = {}
-    if cohere_api_key:
-        headers["X-Cohere-Api-Key"] = cohere_api_key
-
-    if not weaviate_url:
-        raise RuntimeError("Missing env var: WEAVIATE_URL")
-
-    if weaviate_api_key:
-        _wclient = weaviate.connect_to_weaviate_cloud(
-            cluster_url=weaviate_url,
-            auth_credentials=weaviate.auth.AuthApiKey(weaviate_api_key),
-            headers=headers,
-        )
-    else:
-        # Some WCD setups may be public / not require an API key.
-        _wclient = weaviate.connect_to_weaviate_cloud(
-            cluster_url=weaviate_url,
-            headers=headers,
-        )
-
-    if not _wclient.collections.exists(COLLECTION_NAME):
-        _wclient.collections.create(
-            name=COLLECTION_NAME,
-            # Use vector_config (new API) to vectorize only the chunk_text property.
-            vector_config=[
-                Configure.Vectors.text2vec_cohere(
-                    name=VECTOR_NAME,
-                    source_properties=["chunk_text"],
-                    model=COHERE_MODEL,
-                )
-            ],
-            properties=[
-                Property(name="chunk_text", data_type=DataType.TEXT),
-                Property(name="doc_id", data_type=DataType.TEXT),
-                Property(name="course", data_type=DataType.TEXT),
-                Property(name="chunk_index", data_type=DataType.INT),
-                Property(name="source", data_type=DataType.TEXT),
-            ],
-        )
-
-    _collection = _wclient.collections.use(COLLECTION_NAME)
 
 class LexiEngine:
     def __init__(self):
@@ -110,20 +91,42 @@ class LexiEngine:
         chunks = self.chunk_text(text)
         course_code = (course_code or "").strip()
 
-        # Deterministic IDs so re-upload overwrites same chunks.
-        with _collection.batch.dynamic() as batch:
+        # Generate embeddings in batch via Cohere
+        vectors = _get_cohere_embeddings(chunks, input_type="search_document")
+
+        db = SessionLocal()
+        try:
+            # Deterministic IDs so re-upload overwrites same chunks.
             for i, chunk in enumerate(chunks):
-                obj_uuid = uuid.uuid5(uuid.NAMESPACE_URL, f"{doc_id}::chunk::{i}")
-                batch.add_object(
-                    uuid=obj_uuid,
-                    properties={
-                        "chunk_text": chunk,
-                        "doc_id": doc_id,
-                        "course": course_code,
-                        "chunk_index": i,
-                        "source": source,
-                    },
-                )
+                obj_uuid = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{doc_id}::chunk::{i}"))
+                
+                # Check if exists, overwrite or insert
+                existing = db.query(LexiChunk).filter(LexiChunk.id == obj_uuid).first()
+                if existing:
+                    existing.chunk_text = chunk
+                    existing.doc_id = doc_id
+                    existing.course = course_code
+                    existing.chunk_index = i
+                    existing.source = source
+                    existing.embedding = vectors[i]
+                else:
+                    db_chunk = LexiChunk(
+                        id=obj_uuid,
+                        doc_id=doc_id,
+                        course=course_code,
+                        chunk_index=i,
+                        chunk_text=chunk,
+                        source=source,
+                        embedding=vectors[i]
+                    )
+                    db.add(db_chunk)
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Failed to ingest materials in Postgres: {e}")
+            raise e
+        finally:
+            db.close()
 
         return f"Ingested {len(chunks)} chunks for {doc_id} in {course_code}"
 
@@ -131,72 +134,105 @@ class LexiEngine:
         _ensure_initialized()
         course_code = (course_code or "").strip()
 
-        # Hybrid search combines keyword + vector. alpha=0 -> keyword only, alpha=1 -> vector only.
-        hybrid_kwargs = dict(
-            query=user_query,
-            alpha=alpha,
-            limit=top_k,
-            filters=Filter.by_property("course").equal(course_code),
-            query_properties=["chunk_text"],
-            return_metadata=MetadataQuery(score=True, explain_score=True),
-            return_properties=["chunk_text", "doc_id", "course", "chunk_index", "source"],
-        )
-
-        # If the collection has a named vector, Weaviate requires target_vector.
+        db = SessionLocal()
         try:
-            resp = _collection.query.hybrid(
-                target_vector=VECTOR_NAME,
-                **hybrid_kwargs,
-            )
-        except Exception:
-            resp = _collection.query.hybrid(
-                **hybrid_kwargs,
-            )
+            # 1. Vector Search
+            query_vector = _get_cohere_embeddings([user_query], input_type="search_query")[0]
+            distance = LexiChunk.embedding.cosine_distance(query_vector)
+            vector_results = db.query(LexiChunk, distance.label("distance")).filter(
+                LexiChunk.course == course_code
+            ).order_by("distance").limit(top_k * 2).all()
 
-        matches = []
-        for obj in resp.objects:
-            props = obj.properties or {}
-            chunk_text = props.get("chunk_text")
-            score = getattr(obj.metadata, "score", 0.0) or 0.0
-            if chunk_text and score >= min_score:
-                matches.append(
-                    {
+            # Map ID to (object, score)
+            vector_hits = {}
+            for row in vector_results:
+                sim = 1.0 - row.distance
+                vector_hits[row.LexiChunk.id] = (row.LexiChunk, sim)
+
+            # 2. Keyword Search using Postgres tsvector
+            from sqlalchemy import text as sql_text
+            keyword_query = sql_text("""
+                SELECT id, ts_rank_cd(to_tsvector('english', chunk_text), plainto_tsquery('english', :query)) AS rank
+                FROM ai.lexi_chunks
+                WHERE course = :course
+                ORDER BY rank DESC
+                LIMIT :limit
+            """)
+            keyword_results = db.execute(keyword_query, {
+                "query": user_query,
+                "course": course_code,
+                "limit": top_k * 2
+            }).all()
+
+            keyword_hits = {}
+            for row in keyword_results:
+                # fetch the object from database
+                chunk_obj = db.query(LexiChunk).filter(LexiChunk.id == row.id).first()
+                if chunk_obj:
+                    keyword_hits[row.id] = (chunk_obj, row.rank)
+
+            # 3. Combine scores using RRF or simple weighted sum
+            # If alpha = 1.0, vector only. If alpha = 0.0, keyword only.
+            all_ids = set(vector_hits.keys()) | set(keyword_hits.keys())
+            combined_scores = []
+
+            # RRF Parameters
+            k = 60
+            for cid in all_ids:
+                vector_rank = list(vector_hits.keys()).index(cid) + 1 if cid in vector_hits else None
+                keyword_rank = list(keyword_hits.keys()).index(cid) + 1 if cid in keyword_hits else None
+
+                rrf_score = 0.0
+                if vector_rank is not None:
+                    rrf_score += alpha * (1.0 / (k + vector_rank))
+                if keyword_rank is not None:
+                    rrf_score += (1.0 - alpha) * (1.0 / (k + keyword_rank))
+
+                obj, vec_score = vector_hits.get(cid, (None, 0.0))
+                if obj is None:
+                    obj, _ = keyword_hits.get(cid)
+                
+                score = vec_score if vec_score > 0 else 0.0
+
+                combined_scores.append((obj, rrf_score, score))
+
+            # Sort by combined RRF score descending
+            combined_scores.sort(key=lambda x: x[1], reverse=True)
+
+            matches = []
+            for obj, rrf_score, score in combined_scores[:top_k]:
+                if score >= min_score:
+                    matches.append({
                         "score": score,
-                        "text": chunk_text,
-                        "doc_id": props.get("doc_id", "unknown"),
-                        "chunk_index": props.get("chunk_index", -1),
-                        "source": props.get("source", "unknown"),
-                        "explain_score": getattr(obj.metadata, "explain_score", None),
-                    }
-                )
+                        "text": obj.chunk_text,
+                        "doc_id": obj.doc_id,
+                        "chunk_index": obj.chunk_index,
+                        "source": obj.source,
+                        "explain_score": f"RRF score: {rrf_score:.5f}, Vector similarity: {score:.4f}"
+                    })
 
-        # Fallback: if hybrid returns nothing (common for generic questions like "summarize"),
-        # fetch a few chunks from this course so the LLM has something to work with.
-        if not matches:
-            try:
-                fallback = _collection.query.fetch_objects(
-                    limit=top_k,
-                    filters=Filter.by_property("course").equal(course_code),
-                    return_properties=["chunk_text", "doc_id", "course", "chunk_index", "source"],
-                )
-                for obj in fallback.objects:
-                    props = obj.properties or {}
-                    chunk_text = props.get("chunk_text")
-                    if chunk_text:
-                        matches.append(
-                            {
-                                "score": 0.0,
-                                "text": chunk_text,
-                                "doc_id": props.get("doc_id", "unknown"),
-                                "chunk_index": props.get("chunk_index", -1),
-                                "source": props.get("source", "unknown"),
-                                "explain_score": None,
-                            }
-                        )
-            except Exception:
-                pass
+            # Fallback: if matches is empty, fetch objects
+            if not matches:
+                fallback = db.query(LexiChunk).filter(
+                    LexiChunk.course == course_code
+                ).order_by(LexiChunk.chunk_index.asc()).limit(top_k).all()
+                for chunk in fallback:
+                    matches.append({
+                        "score": 0.0,
+                        "text": chunk.chunk_text,
+                        "doc_id": chunk.doc_id,
+                        "chunk_index": chunk.chunk_index,
+                        "source": chunk.source,
+                        "explain_score": "Fallback fetch"
+                    })
 
-        return matches
+            return matches
+
+        except Exception as e:
+            logger.error(f"Error in lexicore _retrieve: {e}")
+            return []
+        finally:
+            db.close()
 
     def contextual_chat(self, user_query, course_code):
         matches = self._retrieve(user_query, course_code)
@@ -233,8 +269,6 @@ def _check_env():
     missing = []
     if not os.getenv("GEMINI_API_KEY"):
         missing.append("GEMINI_API_KEY")
-    if not os.getenv("WEAVIATE_URL"):
-        missing.append("WEAVIATE_URL")
     if not os.getenv("COHERE_API_KEY"):
         missing.append("COHERE_API_KEY")
     if missing:
@@ -335,11 +369,7 @@ def run_cli():
         print("\nQuestion:", args.ask)
         print("Answer:", lexi.contextual_chat(args.ask, args.course))
 
-    if _wclient is not None:
-        try:
-            _wclient.close()
-        except Exception:
-            pass
+
 
 if __name__ == "__main__":
     run_cli()

@@ -69,9 +69,38 @@ class UserSession(Base):
     num_questions        = Column(Integer,         nullable=True)
 
 
-# Ensure the 'ai' schema exists before creating tables
+# ─────────────────────────────────────────────────────────────────────────────
+# Vector Databases models
+# ─────────────────────────────────────────────────────────────────────────────
+from pgvector.sqlalchemy import Vector
+
+class ReadingDocumentChunk(Base):
+    __tablename__ = "reading_document_chunks"
+    __table_args__ = {"schema": "ai"}
+
+    id          = Column(String, primary_key=True)
+    doc_id      = Column(String, nullable=False, index=True)
+    chunk_index = Column(Integer, nullable=False)
+    chunk_text  = Column(Text, nullable=False)
+    embedding   = Column(Vector(768), nullable=False)
+
+class LexiChunk(Base):
+    __tablename__ = "lexi_chunks"
+    __table_args__ = {"schema": "ai"}
+
+    id          = Column(String, primary_key=True)
+    doc_id      = Column(String, nullable=False, index=True)
+    course      = Column(String, nullable=False, index=True)
+    chunk_index = Column(Integer, nullable=False)
+    chunk_text  = Column(Text, nullable=False)
+    source      = Column(String, nullable=False)
+    embedding   = Column(Vector(1024), nullable=False)
+
+
+# Ensure the 'ai' schema and 'vector' extension exist before creating tables
 from sqlalchemy import text
 with engine.connect() as conn:
+    conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
     conn.execute(text("CREATE SCHEMA IF NOT EXISTS ai"))
     conn.commit()
 
@@ -93,6 +122,7 @@ def init_db():
     """Initialize database schema and tables."""
     from sqlalchemy import text
     with engine.connect() as conn:
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         conn.execute(text("CREATE SCHEMA IF NOT EXISTS ai"))
         conn.commit()
     Base.metadata.create_all(bind=engine)

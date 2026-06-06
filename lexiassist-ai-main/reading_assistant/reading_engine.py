@@ -12,9 +12,6 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from lexicore import LexiEngine
-import weaviate
-from weaviate.classes.config import Configure, DataType, Property
-from weaviate.classes.query import Filter
 from google import genai
 from google.genai import types
 import time
@@ -35,56 +32,7 @@ class ReadingState(TypedDict):
     audio: Optional[bytes]
 
 
-COLLECTION_NAME = 'New_reading_docs'
-_weaviate_client = None
 
-
-def _get_weaviate_client():
-    """Lazy singleton — connects to Weaviate on first call."""
-    global _weaviate_client
-    if _weaviate_client is not None:
-        return _weaviate_client
-
-    weaviate_url = os.getenv("WEAVIATE_URL")
-    weaviate_api_key = os.getenv("WEAVIATE_API_KEY")
-    if not weaviate_url:
-        raise RuntimeError("WEAVIATE_URL env var is not set")
-
-    headers = {}
-    cohere_key = os.getenv("COHERE_API_KEY")
-    google_key = os.getenv("GOOGLE_API_KEY")
-    if cohere_key:
-        headers["X-Cohere-Api-Key"] = cohere_key
-    if google_key:
-        headers["X-Goog-Studio-Api-Key"] = google_key
-
-    if weaviate_api_key:
-        _weaviate_client = weaviate.connect_to_weaviate_cloud(
-            cluster_url=weaviate_url,
-            auth_credentials=weaviate.auth.AuthApiKey(weaviate_api_key),
-            headers=headers,
-        )
-    else:
-        _weaviate_client = weaviate.connect_to_weaviate_cloud(
-            cluster_url=weaviate_url,
-            headers=headers,
-        )
-
-    if not _weaviate_client.collections.exists(COLLECTION_NAME):
-        _weaviate_client.collections.create(
-            name=COLLECTION_NAME,
-            generative_config=Configure.Generative.google_gemini(
-                model="gemini-2.5-flash"
-            ),
-            properties=[
-                Property(name="chunk_text", data_type=DataType.TEXT),
-                Property(name="doc_id", data_type=DataType.TEXT),
-                Property(name="chunk_index", data_type=DataType.INT),
-            ],
-        )
-
-    logger.info("Connected to Weaviate Cloud")
-    return _weaviate_client
     
 
 
@@ -95,10 +43,10 @@ class ReaadingEngine:
         self.tts_generator = TTSGenerator()
 
     def store_document(self, state: ReadingState) -> ReadingState:
-        """Embed and store the document in Weaviate for RAG reuse."""
+        """Embed and store the document in Postgres pgvector for RAG reuse."""
         from langchain_google_genai import GoogleGenerativeAIEmbeddings
-        client = _get_weaviate_client()
-        docs = client.collections.use(COLLECTION_NAME)
+        from database import SessionLocal, ReadingDocumentChunk
+        
         embeddings = GoogleGenerativeAIEmbeddings(model="gemini-embedding-001")
         
         # Chunk and store
@@ -107,26 +55,25 @@ class ReaadingEngine:
         
         vectors = embeddings.embed_documents(chunks)
         
-        with docs.batch.stream() as batch:
+        db = SessionLocal()
+        try:
             for i, chunk in enumerate(chunks):
-                obj_uuid = uuid.uuid5(uuid.NAMESPACE_URL, f"{doc_id}::chunk::{i}")
-                batch.add_object(
-                    uuid=obj_uuid,
-                    properties={
-                        "chunk_text": chunk,
-                        "doc_id": doc_id,
-                        "chunk_index": i
-                    },
-                    vector=vectors[i]
+                obj_uuid = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{doc_id}::chunk::{i}"))
+                db_chunk = ReadingDocumentChunk(
+                    id=obj_uuid,
+                    doc_id=doc_id,
+                    chunk_index=i,
+                    chunk_text=chunk,
+                    embedding=vectors[i]
                 )
-
-        if len(docs.batch.failed_objects) > 0:
-            time.sleep(5)
-            print(f"Failed to store {len(docs.batch.failed_objects)} chunks")
-
-            for failed in docs.batch.failed_objects:
-                print(f"{failed.message}")
-            #     print(f"{failed.object_.properties}")
+                db.add(db_chunk)
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Failed to store reading document chunks in Postgres: {e}")
+            raise e
+        finally:
+            db.close()
 
         state["stored_doc_id"] = doc_id
         return state
@@ -138,36 +85,37 @@ class ReaadingEngine:
         if not doc_id:
             raise ValueError("Error: Document not stored properly.")
         
-        client = _get_weaviate_client()
+        from database import SessionLocal, ReadingDocumentChunk
         
-        # If Weaviate is available, retrieve representative chunks from it
-        if client is not None:
-            docs = client.collections.use(COLLECTION_NAME)
-            filtered_chunks = docs.query.fetch_objects(
-                filters=Filter.by_property("doc_id").equal(doc_id),
-                include_vector=False
-            )
-            if not filtered_chunks.objects:
-                state["summary"] = "Error: No document chunks found for summarization."
-                return state
-            
-            sorted_chunks = sorted(filtered_chunks.objects, key=lambda x: x.properties.get("chunk_index"))
-            chunk_texts = [x.properties.get("chunk_text", "") for x in sorted_chunks]
+        # Retrieve chunks from Postgres
+        db = SessionLocal()
+        try:
+            chunks = db.query(ReadingDocumentChunk).filter(
+                ReadingDocumentChunk.doc_id == doc_id
+            ).order_by(ReadingDocumentChunk.chunk_index.asc()).all()
+        except Exception as e:
+            logger.error(f"Failed to fetch document chunks from Postgres: {e}")
+            chunks = []
+        finally:
+            db.close()
+
+        if chunks:
+            chunk_texts = [c.chunk_text for c in chunks]
             selected = self._select_summary_chunks(chunk_texts, max_chunks=12)
         else:
-            # Weaviate not available — chunk original document text
-            logger.info("Weaviate not available — using chunked original document text")
+            # Postgres chunks not available — chunk original document text
+            logger.info("Postgres chunks not available — using chunked original document text")
             doc_text = state.get("document_text", "")
-            chunks = []
+            chunks_list = []
             start = 0
             n = len(doc_text)
             while start < n:
                 end = min(start + 1200, n)
-                chunks.append(doc_text[start:end])
+                chunks_list.append(doc_text[start:end])
                 if end == n:
                     break
                 start = end - 150
-            selected = self._select_summary_chunks(chunks, max_chunks=12)
+            selected = self._select_summary_chunks(chunks_list, max_chunks=12)
     
         context = "\n\n---\n\n".join(f"[Excerpt {i+1}] {c}" for i, c in enumerate(selected))
         
