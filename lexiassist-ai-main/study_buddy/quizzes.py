@@ -4,7 +4,7 @@ import logging
 from typing import Literal, TypedDict
 import os
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_google_genai import ChatGoogleGenerativeAI, HarmCategory, HarmBlockThreshold
 from langgraph.graph import END, StateGraph
 from dotenv import load_dotenv
 from lexicore import LexiEngine
@@ -12,8 +12,19 @@ from lexicore import LexiEngine
 logger = logging.getLogger(__name__)
 
 load_dotenv()  # Load environment variables from .env file
-GOOGLE_API_KEY= os.getenv("GOOGLE_API_KEY")
-llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.4, api_key = GOOGLE_API_KEY)
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+llm = ChatGoogleGenerativeAI(
+    model="gemini-2.5-flash",
+    temperature=0.4,
+    api_key=GOOGLE_API_KEY,
+    response_mime_type="application/json",
+    safety_settings={
+        HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+        HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+        HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+        HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+    }
+)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -143,6 +154,8 @@ from the following notes. Every question must come strictly from this text:
         logger.info(f"Successfully generated and parsed {len(valid_questions)} multiple choice questions.")
     except Exception as e:
         logger.error(f"Error parsing multiple choice quiz JSON: {e}", exc_info=True)
+        logger.error(f"Raw response content: {repr(response.content)}")
+        logger.error(f"Raw response metadata: {repr(getattr(response, 'response_metadata', None))}")
         state["questions"] = []
 
     return state
@@ -240,6 +253,8 @@ from the following notes. Every question must come strictly from this text:
         logger.info(f"Successfully generated and parsed {len(valid_questions)} theory questions.")
     except Exception as e:
         logger.error(f"Error parsing theory quiz JSON: {e}", exc_info=True)
+        logger.error(f"Raw response content: {repr(response.content)}")
+        logger.error(f"Raw response metadata: {repr(getattr(response, 'response_metadata', None))}")
         state["questions"] = []
 
     return state
