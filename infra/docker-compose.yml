@@ -1,7 +1,7 @@
 services:
   # PostgreSQL Database
   postgres:
-    image: postgres:15-alpine
+    image: pgvector/pgvector:pg15
     container_name: lexiassist-postgres
     environment:
       POSTGRES_USER: lexiassist
