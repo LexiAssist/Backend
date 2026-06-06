@@ -49,13 +49,33 @@ class ReaadingEngine:
         from langchain_google_genai import GoogleGenerativeAIEmbeddings
         from database import SessionLocal, ReadingDocumentChunk
         
-        embeddings = GoogleGenerativeAIEmbeddings(model="gemini-embedding-001")
+        google_api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+        embeddings = GoogleGenerativeAIEmbeddings(
+            model="gemini-embedding-001",
+            google_api_key=google_api_key
+        )
         
         # Chunk and store
         chunks = LexiEngine.chunk_text(state["document_text"])
         doc_id = str(uuid.uuid4())
         
-        vectors = embeddings.embed_documents(chunks)
+        # Resilient embedding generation with retries
+        import time
+        max_retries = 3
+        delay = 2.0
+        vectors = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                logger.info(f"Generating document embeddings (attempt {attempt}/{max_retries})...")
+                vectors = embeddings.embed_documents(chunks)
+                break
+            except Exception as e:
+                logger.warning(f"Embedding generation attempt {attempt} failed: {e}")
+                if attempt == max_retries:
+                    logger.error("Embedding generation failed all attempts.")
+                    raise e
+                time.sleep(delay)
+                delay *= 2.0
         
         db = SessionLocal()
         try:
