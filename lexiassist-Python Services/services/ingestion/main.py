@@ -166,6 +166,117 @@ async def get_task_status(task_id: str):
         "note": "Synchronous processing (Redis not connected)"
     }
 
+
+# Pydantic model for processing from storage
+class ProcessFromStorageRequest(BaseModel):
+    material_id: str
+    user_id: str
+    filename: str
+
+
+@app.post("/process-from-storage")
+async def process_from_storage(request: ProcessFromStorageRequest):
+    """
+    Process a document that has been uploaded to MinIO storage.
+    Downloads the file from MinIO, then processes it through the pipeline.
+    """
+    import httpx
+    import tempfile
+    
+    task_id = str(uuid.uuid4())
+    material_id = request.material_id
+    user_id = request.user_id
+    filename = request.filename
+    
+    # Construct MinIO URL
+    minio_endpoint = os.getenv("MINIO_ENDPOINT", "minio:9000")
+    minio_bucket = os.getenv("MINIO_BUCKET", "lexiassist-materials")
+    
+    # Use internal Docker network for MinIO
+    minio_url = f"http://{minio_endpoint}/{minio_bucket}/materials/{material_id}/{filename}"
+    
+    print(f"\n🚀 Processing from storage: {material_id}")
+    print(f"   Downloading from: {minio_url}")
+    
+    try:
+        # Download file from MinIO
+        response = httpx.get(minio_url, timeout=30.0)
+        if response.status_code != 200:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"File not found in storage: {response.status_code}"
+            )
+        
+        # Save to temp file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            tmp.write(response.content)
+            tmp_path = tmp.name
+        
+        print(f"   ✓ Downloaded {len(response.content)} bytes")
+        
+        try:
+            # Process the file
+            result = process_pipeline(material_id, user_id, tmp_path)
+            
+            # Notify content service of completion
+            await notify_content_service(material_id, "completed", result['chunks_created'])
+            
+            return ProcessResponse(
+                task_id=task_id,
+                status="completed",
+                message=f"Document processed successfully! Created {result['chunks_created']} chunks.",
+                chunks_created=result['chunks_created'],
+                storage_method=result['storage_method']
+            )
+        finally:
+            # Clean up temp file
+            os.unlink(tmp_path)
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"\n❌ Error processing from storage: {e}")
+        import traceback
+        traceback.print_exc()
+        
+        # Notify content service of failure
+        await notify_content_service(material_id, "failed", 0, str(e))
+        
+        raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
+
+
+async def notify_content_service(material_id: str, status: str, chunks: int = 0, error: str = None):
+    """Notify content service about processing status."""
+    import httpx
+    
+    webhook_url = os.getenv("CONTENT_WEBHOOK_URL")
+    if not webhook_url:
+        print("⚠️ No CONTENT_WEBHOOK_URL configured, skipping notification")
+        return
+    
+    internal_key = os.getenv("INTERNAL_API_KEY", "dev-internal-key")
+    
+    payload = {
+        "material_id": material_id,
+        "status": status,
+        "chunks_created": chunks,
+    }
+    if error:
+        payload["error"] = error
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                webhook_url,
+                json=payload,
+                headers={"X-Internal-API-Key": internal_key},
+                timeout=10.0
+            )
+            print(f"   ✓ Notified content service: {response.status_code}")
+    except Exception as e:
+        print(f"   ⚠️ Failed to notify content service: {e}")
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=5002, reload=True)

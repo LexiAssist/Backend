@@ -55,6 +55,7 @@ func (h *GatewayHandler) RegisterRoutes(e *echo.Echo) {
 		public.POST("/api/v1/auth/forgot-password", h.ProxyToUserService)
 		public.POST("/api/v1/auth/reset-password", h.ProxyToUserService)
 		public.GET("/api/v1/auth/public-key", h.ProxyToUserService)
+		public.POST("/process-from-storage", h.ProxyToIngestionService)
 	}
 	
 	// Protected routes (JWT required)
@@ -272,6 +273,12 @@ func (h *GatewayHandler) ProxyToRetrievalService(c echo.Context) error {
 func (h *GatewayHandler) ProxyToAudioService(c echo.Context) error {
 	targetURL := h.config.AudioServiceURL
 	return h.proxy.ProxyRequest(c, targetURL, "audio", true)
+}
+
+// ProxyToIngestionService proxies to Ingestion Service.
+func (h *GatewayHandler) ProxyToIngestionService(c echo.Context) error {
+	targetURL := h.config.IngestionServiceURL
+	return h.proxy.ProxyRequest(c, targetURL, "ingestion", false)
 }
 
 // ProxyWebSocketToSyncService proxies WebSocket connections to Sync Service.
