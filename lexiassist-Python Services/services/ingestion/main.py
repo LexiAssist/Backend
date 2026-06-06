@@ -193,7 +193,7 @@ async def process_from_storage(request: ProcessFromStorageRequest):
     minio_bucket = os.getenv("MINIO_BUCKET", "lexiassist-materials")
     
     # Use internal Docker network for MinIO
-    minio_url = f"http://{minio_endpoint}/{minio_bucket}/materials/{material_id}/{filename}"
+    minio_url = f"http://{minio_endpoint}/{minio_bucket}/materials/{user_id}/{material_id}"
     
     print(f"\n🚀 Processing from storage: {material_id}")
     print(f"   Downloading from: {minio_url}")
