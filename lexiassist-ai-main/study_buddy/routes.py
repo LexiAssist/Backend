@@ -1,7 +1,10 @@
 # study_tools/routes.py
 import io
 import uuid
+import logging
 from typing import Literal, Optional
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
@@ -174,6 +177,7 @@ async def generate_flashcards(
     this session later via `GET /study/flashcards/session/{session_id}`.
     """
     document_text = await extract_text(file)
+    logger.info(f"Flashcards request - filename: {file.filename}, length: {len(document_text)}, preview: {repr(document_text[:200])}")
     if not document_text.strip():
         raise HTTPException(status_code=422, detail="No text could be extracted from the file.")
 
@@ -261,6 +265,7 @@ async def generate_quiz(
     this session later via `GET /study/quiz/session/{session_id}`.
     """
     document_text = await extract_text(file)
+    logger.info(f"Quiz request - filename: {file.filename}, type: {quiz_type}, length: {len(document_text)}, preview: {repr(document_text[:200])}")
     if not document_text.strip():
         raise HTTPException(status_code=422, detail="No text could be extracted from the file.")
 
