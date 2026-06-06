@@ -106,6 +106,15 @@ func main() {
 		} else {
 			logger.Info("MinIO bucket already exists", zap.String("bucket", cfg.MinIOBucket))
 		}
+
+		// Set bucket policy to public read for materials/* so the ingestion service can download files
+		policy := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":["*"]},"Action":["s3:GetObject"],"Resource":["arn:aws:s3:::` + cfg.MinIOBucket + `/materials/*"]}]}`
+		err = minioClient.SetBucketPolicy(ctxBucket, cfg.MinIOBucket, policy)
+		if err != nil {
+			logger.Warn("failed to set MinIO bucket policy", zap.Error(err))
+		} else {
+			logger.Info("MinIO bucket policy set to public read for materials/*", zap.String("bucket", cfg.MinIOBucket))
+		}
 	}()
 
 	// Initialize services
