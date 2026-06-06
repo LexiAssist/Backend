@@ -8,7 +8,7 @@ import traceback
 import uuid
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_google_genai import ChatGoogleGenerativeAI
+from shared.llm_utils import get_llm, safe_llm_invoke
 
 from database import SessionLocal, UserSession, SessionType
 from job_queue import dequeue_job, update_job_status, requeue_job
@@ -16,10 +16,8 @@ from reading_assistant.reading_engine import reading_graph
 from reading_assistant.tts_engine import TTSGenerator
 from study_buddy.routes import _generate_flashcards_cached, _generate_quiz_cached
 
-llm = ChatGoogleGenerativeAI(
-    model=os.getenv("DEFAULT_MODEL", "gemini-2.5-flash"),
-    temperature=0.2,
-)
+llm = get_llm(temperature=0.2, model=os.getenv("DEFAULT_MODEL", "gemini-2.5-flash"))
+fallback_llm = get_llm(temperature=0.2, model="gemini-2.5-flash-lite")
 
 
 class AIWorker:
@@ -47,6 +45,7 @@ class AIWorker:
         print("AI Worker stopped")
 
     def _run(self):
+        import time
         while not self._stop_event.is_set():
             try:
                 job = dequeue_job(timeout=2)
@@ -56,6 +55,8 @@ class AIWorker:
             except Exception as e:
                 print(f"Worker loop error: {e}")
                 traceback.print_exc()
+                # Prevent CPU spike and log flood when Redis/DB are down
+                time.sleep(5)
 
     def _process_job(self, job: dict):
         job_id = job["job_id"]
@@ -357,7 +358,7 @@ Format rules:
             HumanMessage(content=f"Subject: {subject}\n\nRaw transcript:\n{raw_text}"),
         ]
 
-        response = llm.invoke(messages)
+        response = safe_llm_invoke(llm, messages, fallback_llm=fallback_llm)
         structured_notes = response.content.strip()
 
         update_job_status(

@@ -3,29 +3,26 @@ import json
 import logging
 from typing import TypedDict
 import os
+import sys
+from pathlib import Path
+
+# Add project root to sys.path if not present to ensure shared package resolves correctly
+project_root = Path(__file__).parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_google_genai import ChatGoogleGenerativeAI, HarmCategory, HarmBlockThreshold
 from langgraph.graph import END, StateGraph
 from dotenv import load_dotenv
 from lexicore import LexiEngine
+from shared.llm_utils import get_llm, safe_llm_invoke
 
 logger = logging.getLogger(__name__)
 
 load_dotenv()  # Load environment variables from .env file
 
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-llm = ChatGoogleGenerativeAI(
-    model="gemini-2.5-flash",
-    temperature=0.4,
-    api_key=GOOGLE_API_KEY,
-    response_mime_type="application/json",
-    safety_settings={
-        HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-        HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-        HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-        HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-    }
-)
+llm = get_llm(temperature=0.4, response_mime_type="application/json", model="gemini-2.5-flash")
+fallback_llm = get_llm(temperature=0.4, response_mime_type="application/json", model="gemini-2.5-flash-lite")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -84,7 +81,7 @@ Every flashcard must come strictly from this text:
 
 {context_text}""")
 
-    response = llm.invoke([system, human])
+    response = safe_llm_invoke(llm, [system, human], fallback_llm=fallback_llm)
 
     try:
         clean = response.content.strip()

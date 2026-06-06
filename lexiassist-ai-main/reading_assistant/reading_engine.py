@@ -1,7 +1,7 @@
 # reading_assistant/reading_graph.py
 from typing import TypedDict, Optional
 from langgraph.graph import StateGraph, END
-from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_core.messages import HumanMessage, SystemMessage
 import json, base64
 import uuid
@@ -16,10 +16,12 @@ from google import genai
 from google.genai import types
 import time
 import logging
+from shared.llm_utils import get_llm, safe_llm_invoke
 
 logger = logging.getLogger(__name__)
 
-llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.2)
+llm = get_llm(temperature=0.2, model="gemini-2.5-flash")
+fallback_llm = get_llm(temperature=0.2, model="gemini-2.5-flash-lite")
 
 class ReadingState(TypedDict):
     document_text: str
@@ -133,7 +135,7 @@ class ReaadingEngine:
             content=f"Summarise the following excerpts from an academic text. Provide a {summary_type} summary suitable for audio narration:\n\n{context[:max_chars]}"
         )
 
-        response = llm.invoke([system, human])
+        response = safe_llm_invoke(llm, [system, human], fallback_llm=fallback_llm)
         state["summary"] = response.content
         state["summary_type"] = summary_type
         return state
@@ -148,7 +150,7 @@ class ReaadingEngine:
         # Context compression: use first ~8000 chars instead of full document
         text_sample = state["document_text"][:8000]
         human = HumanMessage(content=f"Extract vocabulary from:\n\n{text_sample}")
-        response = llm.invoke([system, human])
+        response = safe_llm_invoke(llm, [system, human], fallback_llm=fallback_llm)
         
         try:
             state["vocab_terms"] = json.loads(response.content)

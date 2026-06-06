@@ -6,18 +6,27 @@ from typing import Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from groq import Groq
 import os
+import sys
+from pathlib import Path
+
+# Add project root to sys.path if not present to ensure shared package resolves correctly
+project_root = Path(__file__).parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
+from shared.llm_utils import get_llm, safe_llm_invoke
 
 from database import UserSession, SessionType, get_db
 from job_queue import enqueue_job
 
 router = APIRouter(prefix="/writing", tags=["Writing Assistant"])
 
-llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.2)
+llm = get_llm(temperature=0.2, model="gemini-2.5-flash")
+fallback_llm = get_llm(temperature=0.2, model="gemini-2.5-flash-lite")
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 # Rolling context per session — stores cleaned note chunks
@@ -224,7 +233,7 @@ Format rules:
     )
 
     try:
-        response = llm.invoke(messages)
+        response = safe_llm_invoke(llm, messages, fallback_llm=fallback_llm)
         structured_notes = response.content.strip()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Notes generation failed: {e}")
