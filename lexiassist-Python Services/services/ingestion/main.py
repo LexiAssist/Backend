@@ -25,7 +25,7 @@ except Exception as e:
 def verify_internal_key(request: Request, x_internal_key: str = Header(None)):
     if request.url.path in ("/", "/health"):
         return
-    expected = os.getenv("INTERNAL_API_KEY", "dev-internal-key-change-in-production")
+    expected = os.getenv("INTERNAL_API_KEY", "dev-internal-key")
     if not x_internal_key or x_internal_key != expected:
         raise HTTPException(status_code=403, detail="Invalid or missing internal key")
 
@@ -206,10 +206,7 @@ async def process_from_storage(request: ProcessFromStorageRequest):
         # Download file from MinIO
         response = httpx.get(minio_url, timeout=30.0)
         if response.status_code != 200:
-            raise HTTPException(
-                status_code=404, 
-                detail=f"File not found in storage: {response.status_code}"
-            )
+            raise Exception(f"File not found in storage: MinIO returned status code {response.status_code}")
         
         # Determine the file extension from the filename parameter
         _, ext = os.path.splitext(filename.lower())
@@ -241,8 +238,6 @@ async def process_from_storage(request: ProcessFromStorageRequest):
             # Clean up temp file
             os.unlink(tmp_path)
             
-    except HTTPException:
-        raise
     except Exception as e:
         print(f"\n❌ Error processing from storage: {e}")
         import traceback

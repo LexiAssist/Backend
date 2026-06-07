@@ -28,7 +28,7 @@ from database import (
 def verify_internal_key(request: Request, x_internal_key: str = Header(None)):
     if request.url.path in ("/", "/health"):
         return
-    expected = os.getenv("INTERNAL_API_KEY", "dev-internal-key-change-in-production")
+    expected = os.getenv("INTERNAL_API_KEY", "dev-internal-key")
     if not x_internal_key or x_internal_key != expected:
         raise HTTPException(status_code=403, detail="Invalid or missing internal key")
 
