@@ -290,6 +290,10 @@ services:
     envVars:
       - key: PORT
         value: 5002
+      - key: DATABASE_URL
+        value: postgresql://postgres:YOUR_PASSWORD@db.YOUR_PROJECT.supabase.co:5432/postgres
+      - key: CONTENT_WEBHOOK_URL
+        value: http://lexiassist-content-service:8082/api/v1/internal/materials/processing-status
       - key: INTERNAL_API_KEY
         fromService:
           type: web
