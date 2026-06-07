@@ -52,8 +52,15 @@ if PGVECTOR_AVAILABLE:
 def init_database():
     """Create tables - run this once when DB is ready"""
     if PGVECTOR_AVAILABLE and engine:
-        Base.metadata.create_all(bind=engine)
-        print("Database tables created!")
+        try:
+            with engine.connect() as conn:
+                from sqlalchemy import text
+                conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
+                conn.commit()
+            Base.metadata.create_all(bind=engine)
+            print("✅ Database tables initialized (including pgvector document_chunks)")
+        except Exception as e:
+            print(f"⚠️  Failed to initialize pgvector database tables: {e}")
     else:
         print("Cannot create tables - PostgreSQL not connected")
 

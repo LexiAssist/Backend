@@ -60,6 +60,18 @@ if PGVECTOR_AVAILABLE:
         SessionLocal = sessionmaker(bind=engine)
         DB_CONNECTED = True
         print("✅ PostgreSQL + pgvector connected")
+        
+        # Initialize pgvector extension and create tables if they do not exist
+        try:
+            with engine.connect() as conn:
+                from sqlalchemy import text
+                conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
+                conn.commit()
+            Base.metadata.create_all(bind=engine)
+            print("✅ Database tables verified/created for Retrieval Service")
+        except Exception as e:
+            print(f"⚠️  Failed to verify/create database tables for Retrieval: {e}")
+            
     except Exception as e:
         print(f"⚠️  PostgreSQL not available: {e}")
         print("   Using JSON fallback search instead")

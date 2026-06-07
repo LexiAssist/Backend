@@ -15,7 +15,11 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from parser import extract_text_from_file
 from chunker import chunk_text
 from embedder import generate_embeddings
-from models import save_chunks
+from models import save_chunks, init_database
+try:
+    init_database()
+except Exception as e:
+    print(f"⚠️ Database initialization failed at startup: {e}")
 
 
 def verify_internal_key(request: Request, x_internal_key: str = Header(None)):
