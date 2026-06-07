@@ -30,6 +30,54 @@ def extract_text_from_pdf(file_path: str) -> str:
         print(f"Error reading PDF: {e}")
         return ""
 
+def extract_text_from_file(file_path: str) -> str:
+    """
+    Detects file extension and extracts text from PDF, DOCX, TXT, or MD file.
+    """
+    _, ext = os.path.splitext(file_path.lower())
+    
+    if ext in (".txt", ".md", ".json", ".csv"):
+        print(f"Parsing file as plain text: {file_path}")
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                return f.read().strip()
+        except Exception as e:
+            print(f"Error reading text file: {e}")
+            return ""
+            
+    elif ext == ".pdf":
+        print(f"Parsing file as PDF: {file_path}")
+        return extract_text_from_pdf(file_path)
+        
+    elif ext == ".docx":
+        print(f"Parsing file as DOCX: {file_path}")
+        try:
+            import zipfile
+            import xml.etree.ElementTree as ET
+            
+            texts = []
+            with zipfile.ZipFile(file_path) as docx:
+                xml_content = docx.read('word/document.xml')
+                root = ET.fromstring(xml_content)
+                # Word XML paragraph query
+                for paragraph in root.iter('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}p'):
+                    texts.append(''.join(node.text for node in paragraph.iter('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t') if node.text))
+            return '\n\n'.join(texts).strip()
+        except Exception as e:
+            print(f"Error reading DOCX file: {e}")
+            return ""
+            
+    else:
+        # Fallback to plain text
+        print(f"Parsing file as raw text fallback: {file_path}")
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                return f.read().strip()
+        except Exception as e:
+            print(f"Error reading raw text file fallback: {e}")
+            return ""
+
+
 def save_text_to_file(text: str, output_path: str):
     """Helper: Save extracted text to a .txt file for verification"""
     with open(output_path, 'w', encoding='utf-8') as f:

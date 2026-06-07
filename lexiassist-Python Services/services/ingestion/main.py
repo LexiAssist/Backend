@@ -12,7 +12,7 @@ from datetime import datetime
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 # Import our pipeline modules
-from parser import extract_text_from_pdf
+from parser import extract_text_from_file
 from chunker import chunk_text
 from embedder import generate_embeddings
 from models import save_chunks
@@ -77,11 +77,11 @@ def process_pipeline(material_id: str, user_id: str, file_path: str) -> dict:
     print(f"   User: {user_id}")
     print(f"   File: {file_path}")
 
-    # Step 1: Extract text from PDF
+    # Step 1: Extract text from document
     print("\n📄 Step 1: Extracting text...")
-    text = extract_text_from_pdf(file_path)
+    text = extract_text_from_file(file_path)
     if not text:
-        raise Exception("No text extracted from PDF")
+        raise Exception("No text extracted from document")
     print(f"   ✓ Extracted {len(text)} characters")
 
     # Step 2: Chunk text
@@ -207,8 +207,13 @@ async def process_from_storage(request: ProcessFromStorageRequest):
                 detail=f"File not found in storage: {response.status_code}"
             )
         
+        # Determine the file extension from the filename parameter
+        _, ext = os.path.splitext(filename.lower())
+        if not ext:
+            ext = ".pdf"
+
         # Save to temp file
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
             tmp.write(response.content)
             tmp_path = tmp.name
         
