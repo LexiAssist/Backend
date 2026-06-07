@@ -178,7 +178,7 @@ class ProcessFromStorageRequest(BaseModel):
     filename: str
 
 
-@app.post("/process-from-storage")
+@app.post("/api/v1/process-from-storage")
 async def process_from_storage(request: ProcessFromStorageRequest):
     """
     Process a document that has been uploaded to MinIO storage.

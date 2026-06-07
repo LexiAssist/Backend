@@ -55,7 +55,6 @@ func (h *GatewayHandler) RegisterRoutes(e *echo.Echo) {
 		public.POST("/api/v1/auth/forgot-password", h.ProxyToUserService)
 		public.POST("/api/v1/auth/reset-password", h.ProxyToUserService)
 		public.GET("/api/v1/auth/public-key", h.ProxyToUserService)
-		public.POST("/process-from-storage", h.ProxyToIngestionService)
 	}
 	
 	// Protected routes (JWT required)
@@ -97,6 +96,7 @@ func (h *GatewayHandler) RegisterRoutes(e *echo.Echo) {
 		protected.GET("/materials/:id", h.ProxyToContentService)
 		protected.POST("/materials/:id/presign", h.ProxyToContentService)
 		protected.POST("/webhooks/material-uploaded", h.ProxyToContentService)
+		protected.POST("/process-from-storage", h.ProxyToIngestionService)
 		
 		// Quizzes
 		protected.GET("/quizzes", h.ProxyToContentService)
