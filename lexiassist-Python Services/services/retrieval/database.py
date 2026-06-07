@@ -37,7 +37,7 @@ class DocumentChunk(Base):
     material_id = Column(String, index=True)
     user_id = Column(String, index=True)
     chunk_text = Column(Text)
-    embedding = Vector(384) if PGVECTOR_AVAILABLE else Column(Text)
+    embedding = Column(Vector(384)) if PGVECTOR_AVAILABLE else Column(Text)
     chunk_index = Column(Integer)
 
 

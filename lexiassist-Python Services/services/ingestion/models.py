@@ -27,9 +27,8 @@ class DocumentChunk(Base):
     user_id = Column(String, index=True)
     chunk_text = Column(Text)
     # For pgvector - dimension matches your embedding model (384)
-    embedding = Vector(384) if PGVECTOR_AVAILABLE else Column(Text)
+    embedding = Column(Vector(384)) if PGVECTOR_AVAILABLE else Column(Text)
     chunk_index = Column(Integer)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 # Database setup (will work when docker-compose provides PostgreSQL)
 DATABASE_URL = os.getenv(
