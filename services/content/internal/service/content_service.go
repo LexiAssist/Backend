@@ -41,6 +41,7 @@ type ContentService interface {
 	UpdateMaterial(ctx context.Context, userID uuid.UUID, materialID uuid.UUID, req *UpdateMaterialRequest) (*model.Material, error)
 	DeleteMaterial(ctx context.Context, userID uuid.UUID, materialID uuid.UUID) error
 	GeneratePresignURL(ctx context.Context, userID uuid.UUID, materialID uuid.UUID, action string) (*PresignResponse, error)
+	UpdateMaterialProcessingStatus(ctx context.Context, materialID uuid.UUID, status string, chunks int, errMsg string) error
 
 	// Quiz operations
 	CreateQuiz(ctx context.Context, userID uuid.UUID, req *CreateQuizRequest) (*model.Quiz, error)
@@ -346,6 +347,34 @@ func (s *contentService) DeleteMaterial(ctx context.Context, userID uuid.UUID, m
 		return err
 	}
 	return s.materialRepo.Delete(ctx, materialID)
+}
+
+// UpdateMaterialProcessingStatus updates the processing status and summary for a material.
+func (s *contentService) UpdateMaterialProcessingStatus(ctx context.Context, materialID uuid.UUID, status string, chunks int, errMsg string) error {
+	var dbStatus model.ProcessingStatus
+	switch status {
+	case "completed":
+		dbStatus = model.ProcessingStatusCompleted
+	case "failed":
+		dbStatus = model.ProcessingStatusFailed
+	case "processing":
+		dbStatus = model.ProcessingStatusProcessing
+	default:
+		dbStatus = model.ProcessingStatusPending
+	}
+
+	var summary string
+	if dbStatus == model.ProcessingStatusCompleted {
+		summary = fmt.Sprintf("Document processed successfully! Created %d chunks.", chunks)
+	} else if dbStatus == model.ProcessingStatusFailed {
+		if errMsg != "" {
+			summary = fmt.Sprintf("Processing failed: %s", errMsg)
+		} else {
+			summary = "Processing failed with an unknown error."
+		}
+	}
+
+	return s.materialRepo.UpdateProcessingStatus(ctx, materialID, dbStatus, summary)
 }
 
 // GeneratePresignURL generates a presigned URL for uploading a file to MinIO.

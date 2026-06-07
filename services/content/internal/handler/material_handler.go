@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"os"
 	"strconv"
 
 	"github.com/go-playground/validator/v10"
@@ -227,3 +228,62 @@ func (h *MaterialHandler) PresignMaterial(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, Response{Data: presignResp})
 }
+
+type UpdateProcessingStatusRequest struct {
+	MaterialID    string `json:"material_id" validate:"required,uuid"`
+	Status        string `json:"status" validate:"required"`
+	ChunksCreated int    `json:"chunks_created"`
+	Error         string `json:"error,omitempty"`
+}
+
+// UpdateProcessingStatus handles internal callbacks to update material processing status.
+// POST /api/v1/internal/materials/processing-status
+func (h *MaterialHandler) UpdateProcessingStatus(c echo.Context) error {
+	// Authenticate the request using X-Internal-API-Key or X-Internal-Key
+	internalKey := os.Getenv("INTERNAL_API_KEY")
+	if internalKey == "" {
+		internalKey = "dev-internal-key"
+	}
+
+	reqKey := c.Request().Header.Get("X-Internal-API-Key")
+	if reqKey == "" {
+		reqKey = c.Request().Header.Get("X-Internal-Key")
+	}
+
+	if reqKey != internalKey {
+		logger.Warn("unauthorized internal callback attempt",
+			zap.String("req_key", reqKey),
+			zap.String("ip", c.RealIP()),
+		)
+		return echo.NewHTTPError(http.StatusUnauthorized, "unauthorized")
+	}
+
+	var req UpdateProcessingStatusRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+
+	if err := h.validator.Struct(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+
+	materialID, err := uuid.Parse(req.MaterialID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid material ID format")
+	}
+
+	err = h.service.UpdateMaterialProcessingStatus(
+		c.Request().Context(),
+		materialID,
+		req.Status,
+		req.ChunksCreated,
+		req.Error,
+	)
+	if err != nil {
+		logger.Error("failed to update material processing status", zap.Error(err))
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to update processing status")
+	}
+
+	return c.JSON(http.StatusOK, Response{Message: "status updated successfully"})
+}
+

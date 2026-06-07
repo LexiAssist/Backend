@@ -173,6 +173,7 @@ func main() {
 		api.PUT("/materials/:id", materialHandler.UpdateMaterial)
 		api.DELETE("/materials/:id", materialHandler.DeleteMaterial)
 		api.POST("/materials/:id/presign", materialHandler.PresignMaterial)
+		api.POST("/internal/materials/processing-status", materialHandler.UpdateProcessingStatus)
 
 		// Quizzes
 		api.POST("/quizzes", quizHandler.CreateQuiz)
