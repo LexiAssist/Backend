@@ -24,13 +24,13 @@ class DocumentChunk(Base):
     __table_args__ = {"schema": "ai"}
 
     id = Column(String, primary_key=True)
-    doc_id = Column(String, index=True)
-    course = Column(String, index=True)
-    chunk_text = Column(Text)
-    source = Column(String, default="uploaded_note")
+    doc_id = Column(String, nullable=False, index=True)
+    course = Column(String, nullable=False, index=True)
+    chunk_index = Column(Integer, nullable=False)
+    chunk_text = Column(Text, nullable=False)
+    source = Column(String, nullable=False, default="uploaded_note")
     # For pgvector - dimension matches Cohere embedding model (1024)
-    embedding = Column(Vector(1024)) if PGVECTOR_AVAILABLE else Column(Text)
-    chunk_index = Column(Integer)
+    embedding = Column(Vector(1024), nullable=False) if PGVECTOR_AVAILABLE else Column(Text, nullable=False)
 
 # Database setup (will work when docker-compose provides PostgreSQL)
 DATABASE_URL = os.getenv(
@@ -81,7 +81,7 @@ def save_chunks(chunks_data: list, material_id: str, user_id: str):
             db = SessionLocal()
             for chunk in chunks_data:
                 db_chunk = DocumentChunk(
-                    id=str(uuid.uuid4()),
+                    id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"{material_id}::chunk::{chunk['index']}")),
                     doc_id=material_id,
                     course=user_id,
                     chunk_text=chunk["text"],

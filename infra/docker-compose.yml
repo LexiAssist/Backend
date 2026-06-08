@@ -353,6 +353,8 @@ services:
     environment:
       - PORT=5003
       - DATABASE_URL=postgresql://lexiassist:lexiassist_secret@postgres:5432/lexiassist
+      - COHERE_API_KEY=${COHERE_API_KEY:-}
+      - COHERE_EMBED_MODEL=${COHERE_EMBED_MODEL:-embed-multilingual-v3.0}
       - LOG_LEVEL=info
       - INTERNAL_API_KEY=${INTERNAL_API_KEY:-dev-internal-key}
     ports:
@@ -402,7 +404,10 @@ services:
       - PORT=5002
       - DATABASE_URL=postgresql://lexiassist:lexiassist_secret@postgres:5432/lexiassist
       - CONTENT_WEBHOOK_URL=http://content-service:8082/api/v1/internal/materials/processing-status
-      - EMBEDDING_MODEL=all-MiniLM-L6-v2
+      - COHERE_API_KEY=${COHERE_API_KEY:-}
+      - COHERE_EMBED_MODEL=${COHERE_EMBED_MODEL:-embed-multilingual-v3.0}
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_BUCKET=lexiassist-materials
       - INTERNAL_API_KEY=${INTERNAL_API_KEY:-dev-internal-key}
       - LOG_LEVEL=info
     ports:

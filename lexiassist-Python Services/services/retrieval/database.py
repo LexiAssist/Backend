@@ -35,12 +35,12 @@ class DocumentChunk(Base):
     __table_args__ = {"schema": "ai"}
 
     id = Column(String, primary_key=True)
-    doc_id = Column(String, index=True)
-    course = Column(String, index=True)
-    chunk_text = Column(Text)
-    source = Column(String, default="uploaded_note")
-    embedding = Column(Vector(1024)) if PGVECTOR_AVAILABLE else Column(Text)
-    chunk_index = Column(Integer)
+    doc_id = Column(String, nullable=False, index=True)
+    course = Column(String, nullable=False, index=True)
+    chunk_index = Column(Integer, nullable=False)
+    chunk_text = Column(Text, nullable=False)
+    source = Column(String, nullable=False, default="uploaded_note")
+    embedding = Column(Vector(1024), nullable=False) if PGVECTOR_AVAILABLE else Column(Text, nullable=False)
 
 
 # Database connection
