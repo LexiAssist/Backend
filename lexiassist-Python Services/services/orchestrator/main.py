@@ -10,6 +10,9 @@ from datetime import datetime, timedelta
 import uuid
 import json
 import asyncio
+import time
+import hashlib
+from google.api_core.exceptions import ResourceExhausted
 
 # Initialize FastAPI
 app = FastAPI(
@@ -48,7 +51,7 @@ MODEL_PRICING = {
     "gemini-1.5-flash": {"input": 0.000075, "output": 0.00030, "description": "Legacy Flash"},
 }
 
-DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "gemini-2.5-flash")
+DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "gemini-2.5-flash-lite")
 
 class ModelRouter:
     def select_model(self, task_type: str, query: str = "", context_chunks: List[str] = None, override: str = None) -> str:
@@ -76,6 +79,25 @@ class ModelRouter:
 router = ModelRouter()
 
 _user_costs: Dict[str, List[Dict]] = {}
+
+# Simple in-memory response cache: {hash: (timestamp, response_data)}
+_response_cache: Dict[str, tuple] = {}
+CACHE_TTL_SECONDS = 300  # 5 minutes
+
+def _get_cache_key(prompt: str, model_name: str) -> str:
+    return hashlib.sha256(f"{model_name}:{prompt}".encode()).hexdigest()
+
+def _get_cached_response(cache_key: str):
+    if cache_key not in _response_cache:
+        return None
+    timestamp, data = _response_cache[cache_key]
+    if time.time() - timestamp > CACHE_TTL_SECONDS:
+        del _response_cache[cache_key]
+        return None
+    return data
+
+def _set_cached_response(cache_key: str, data):
+    _response_cache[cache_key] = (time.time(), data)
 
 def _calculate_cost(model_name: str, input_tokens: int, output_tokens: int) -> float:
     pricing = MODEL_PRICING.get(model_name)
@@ -239,10 +261,37 @@ Your response:"""
 
 
 async def call_gemini(prompt: str, model_name: str = None, task_type: str = "unknown", user_id: str = None) -> tuple:
-    """Call Gemini and return (response_text, input_tokens, output_tokens, cost_usd, model_used)."""
+    """Call Gemini with retry, caching, and return (response_text, input_tokens, output_tokens, cost_usd, model_used)."""
     target_model = model_name or MODEL_NAME
+    
+    # Check cache first
+    cache_key = _get_cache_key(prompt, target_model)
+    cached = _get_cached_response(cache_key)
+    if cached:
+        print(f"♻️  Cache hit | {task_type} | {target_model}")
+        return cached
+    
     model = _get_model(target_model)
-    response = model.generate_content(prompt)
+    
+    # Retry with exponential backoff for 429 rate limit errors
+    max_retries = 3
+    base_delay = 2.0
+    
+    for attempt in range(max_retries):
+        try:
+            response = model.generate_content(prompt)
+            break
+        except ResourceExhausted as e:
+            if attempt < max_retries - 1:
+                delay = base_delay * (2 ** attempt)
+                print(f"⏳ Rate limit hit (429). Retrying in {delay}s... (attempt {attempt + 1}/{max_retries})")
+                await asyncio.sleep(delay)
+            else:
+                print(f"❌ Rate limit exceeded after {max_retries} retries: {e}")
+                raise HTTPException(status_code=429, detail="AI service rate limit exceeded. Please try again in a moment.")
+        except Exception as e:
+            print(f"❌ Gemini API error: {e}")
+            raise HTTPException(status_code=500, detail=f"AI generation failed: {str(e)}")
     
     input_tokens = 0
     output_tokens = 0
@@ -254,8 +303,11 @@ async def call_gemini(prompt: str, model_name: str = None, task_type: str = "unk
     if user_id:
         _track_cost(user_id, task_type, target_model, input_tokens, output_tokens, cost_usd)
     
+    result = (response.text, input_tokens, output_tokens, cost_usd, target_model)
+    _set_cached_response(cache_key, result)
+    
     print(f"💰 {task_type} | {target_model} | ${cost_usd:.6f} | {input_tokens}+{output_tokens} tokens")
-    return response.text, input_tokens, output_tokens, cost_usd, target_model
+    return result
 
 
 # ─── Chat Endpoint ──────────────────────────────────────────────────────
