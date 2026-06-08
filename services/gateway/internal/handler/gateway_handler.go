@@ -94,6 +94,8 @@ func (h *GatewayHandler) RegisterRoutes(e *echo.Echo) {
 		protected.GET("/materials", h.ProxyToContentService)
 		protected.POST("/materials", h.ProxyToContentService)
 		protected.GET("/materials/:id", h.ProxyToContentService)
+		protected.PUT("/materials/:id", h.ProxyToContentService)
+		protected.DELETE("/materials/:id", h.ProxyToContentService)
 		protected.POST("/materials/:id/presign", h.ProxyToContentService)
 		protected.POST("/webhooks/material-uploaded", h.ProxyToContentService)
 		protected.POST("/process-from-storage", h.ProxyToIngestionService)
