@@ -251,9 +251,16 @@ USER QUESTION: {query}
 
 INSTRUCTIONS:
 - Be concise but thorough
-- Use bullet points for lists
+- Format your response using clean, professional Markdown
+- Use **bold text** for section headers and key terms (e.g., **Summary:**, **Key Points:**)
+- Use bullet points (*) for lists of items or facts
+- Use numbered lists (1. 2. 3.) for sequential steps or ranked items
+- Add blank lines between paragraphs and sections for readability
 - For document-based questions: cite which document [Document X]
 - For general knowledge: provide accurate, helpful information
+- Start with a brief overview/summary when appropriate
+- Group related information under clear, bold subheadings
+- Never use wall-of-text paragraphs; always break into digestible chunks
 
 Your response:"""
 
