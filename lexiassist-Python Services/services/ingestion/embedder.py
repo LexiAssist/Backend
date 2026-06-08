@@ -1,42 +1,64 @@
 import os
-os.environ["TRANSFORMERS_NO_TF"] = "1"
-
-from sentence_transformers import SentenceTransformer
+import httpx
 import json
-import numpy as np
 from typing import List, Dict
 
-# Load the embedding model (384 dimensions for all-MiniLM-L6-v2)
-# First run downloads ~80MB model, then it's cached
-print("Loading AI embedding model... (one-time download, ~400MB)")
-model = SentenceTransformer('all-MiniLM-L6-v2')
-print("Model loaded successfully!")
+COHERE_MODEL = os.getenv("COHERE_EMBED_MODEL", "embed-multilingual-v3.0")
+
+def _get_cohere_embeddings(texts: List[str], input_type: str = "search_document") -> List[List[float]]:
+    cohere_api_key = os.getenv("COHERE_API_KEY")
+    if not cohere_api_key:
+        print("⚠️ COHERE_API_KEY is not configured in environment variables. Cohere embedding will fail!")
+        raise RuntimeError("Missing env var: COHERE_API_KEY")
+
+    headers = {
+        "Authorization": f"Bearer {cohere_api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "texts": texts,
+        "model": COHERE_MODEL,
+        "input_type": input_type,
+    }
+    try:
+        with httpx.Client(timeout=60.0) as client:
+            resp = client.post("https://api.cohere.ai/v1/embed", json=payload, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+            return data["embeddings"]
+    except Exception as e:
+        print(f"❌ Cohere embedding API call failed: {e}")
+        raise e
 
 def generate_embeddings(chunks: List[Dict]) -> List[Dict]:
     """
-    Converts text chunks into 384-dimensional vectors using all-MiniLM-L6-v2.
+    Converts text chunks into 1024-dimensional vectors using Cohere.
 
     Args:
         chunks: List of dicts with 'text' key
 
     Returns:
-        Same list with 'embedding' key added (384 floats per chunk)
+        Same list with 'embedding' key added (1024 floats per chunk)
     """
     # Extract just the text from all chunks
     texts = [chunk["text"] for chunk in chunks]
 
-    print(f"Generating embeddings for {len(texts)} chunks...")
+    print(f"Generating embeddings for {len(texts)} chunks via Cohere...")
 
-    # Batch encode (faster than one-by-one)
-    embeddings = model.encode(texts, show_progress_bar=True)
+    all_embeddings = []
+    batch_size = 50
+    for i in range(0, len(texts), batch_size):
+        batch = texts[i:i + batch_size]
+        batch_embeddings = _get_cohere_embeddings(batch, input_type="search_document")
+        all_embeddings.extend(batch_embeddings)
 
     # Add embeddings back to chunks
     for i, chunk in enumerate(chunks):
-        chunk["embedding"] = embeddings[i].tolist()  # Convert numpy to list for JSON
+        chunk["embedding"] = all_embeddings[i]
         # Store dimension count for verification
-        chunk["embedding_dim"] = len(embeddings[i])
+        chunk["embedding_dim"] = len(all_embeddings[i])
 
-    print(f"✅ Generated {len(chunks)} embeddings ({len(embeddings[0]) if chunks else 384} dimensions each)")
+    print(f"✅ Generated {len(chunks)} embeddings ({len(all_embeddings[0]) if all_embeddings else 1024} dimensions each)")
     return chunks
 
 def verify_embeddings(chunks: List[Dict]):

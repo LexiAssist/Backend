@@ -20,14 +20,16 @@ class Base(DeclarativeBase):
     pass
 
 class DocumentChunk(Base):
-    __tablename__ = "document_chunks"
+    __tablename__ = "lexi_chunks"
+    __table_args__ = {"schema": "ai"}
 
     id = Column(String, primary_key=True)
-    material_id = Column(String, index=True)
-    user_id = Column(String, index=True)
+    doc_id = Column(String, index=True)
+    course = Column(String, index=True)
     chunk_text = Column(Text)
-    # For pgvector - dimension matches your embedding model (384)
-    embedding = Column(Vector(384)) if PGVECTOR_AVAILABLE else Column(Text)
+    source = Column(String, default="uploaded_note")
+    # For pgvector - dimension matches Cohere embedding model (1024)
+    embedding = Column(Vector(1024)) if PGVECTOR_AVAILABLE else Column(Text)
     chunk_index = Column(Integer)
 
 # Database setup (will work when docker-compose provides PostgreSQL)
@@ -55,9 +57,10 @@ def init_database():
             with engine.connect() as conn:
                 from sqlalchemy import text
                 conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
+                conn.execute(text("CREATE SCHEMA IF NOT EXISTS ai;"))
                 conn.commit()
             Base.metadata.create_all(bind=engine)
-            print("✅ Database tables initialized (including pgvector document_chunks)")
+            print("✅ Database tables initialized (including pgvector lexi_chunks)")
         except Exception as e:
             print(f"⚠️  Failed to initialize pgvector database tables: {e}")
     else:
@@ -70,6 +73,8 @@ def save_chunks(chunks_data: list, material_id: str, user_id: str):
     """
     import uuid
 
+    is_postgres = DATABASE_URL.startswith("postgresql://") or DATABASE_URL.startswith("postgres://")
+
     # Try database first, fallback to JSON
     if PGVECTOR_AVAILABLE and SessionLocal:
         try:
@@ -77,11 +82,12 @@ def save_chunks(chunks_data: list, material_id: str, user_id: str):
             for chunk in chunks_data:
                 db_chunk = DocumentChunk(
                     id=str(uuid.uuid4()),
-                    material_id=material_id,
-                    user_id=user_id,
+                    doc_id=material_id,
+                    course=user_id,
                     chunk_text=chunk["text"],
                     embedding=chunk["embedding"],
-                    chunk_index=chunk["index"]
+                    chunk_index=chunk["index"],
+                    source="uploaded_note"
                 )
                 db.add(db_chunk)
             db.commit()
@@ -89,6 +95,8 @@ def save_chunks(chunks_data: list, material_id: str, user_id: str):
             return "database"
         except Exception as e:
             print(f"Database save failed: {e}")
+            if is_postgres:
+                raise e
             print("Falling back to JSON storage...")
 
     # Fallback: Save to JSON file (for testing without Docker)

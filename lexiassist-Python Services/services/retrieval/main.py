@@ -8,11 +8,34 @@ from database import search_similar_chunks, get_search_mode
 import os
 import uvicorn
 
-# Import the same embedding model used in Ingestion
-print("Loading embedding model for Retrieval Service... (one-time load)")
-from sentence_transformers import SentenceTransformer
-embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-print("✅ Embedding model loaded (all-MiniLM-L6-v2, 384 dimensions)")
+import httpx
+
+COHERE_MODEL = os.getenv("COHERE_EMBED_MODEL", "embed-multilingual-v3.0")
+
+def _get_cohere_embeddings(texts: List[str], input_type: str = "search_query") -> List[List[float]]:
+    cohere_api_key = os.getenv("COHERE_API_KEY")
+    if not cohere_api_key:
+        print("⚠️ COHERE_API_KEY is not configured in environment variables. Cohere embedding will fail!")
+        raise RuntimeError("Missing env var: COHERE_API_KEY")
+
+    headers = {
+        "Authorization": f"Bearer {cohere_api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "texts": texts,
+        "model": COHERE_MODEL,
+        "input_type": input_type,
+    }
+    try:
+        with httpx.Client(timeout=60.0) as client:
+            resp = client.post("https://api.cohere.ai/v1/embed", json=payload, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+            return data["embeddings"]
+    except Exception as e:
+        print(f"❌ Cohere embedding API call failed: {e}")
+        raise e
 
 
 def verify_internal_key(request: Request, x_internal_key: str = Header(None)):
@@ -61,8 +84,8 @@ async def root():
         "service": "retrieval",
         "port": 5003,
         "version": "2.1.0",
-        "model": "all-MiniLM-L6-v2",
-        "embedding_dim": 384,
+        "model": COHERE_MODEL,
+        "embedding_dim": 1024,
         "search_mode": search_mode
     }
 
@@ -78,13 +101,18 @@ async def health():
 
 def generate_query_embedding(query: str) -> List[float]:
     """
-    Convert user query to a 384-dimensional vector using the same model as Ingestion.
+    Convert user query to a 1024-dimensional vector using Cohere API.
     """
-    print(f"\n🔍 Generating embedding for query: '{query}'")
-    embedding = embedding_model.encode(query)
-    print(f"   ✓ Generated {len(embedding)}-dim vector")
-    print(f"   Sample values: {embedding[0]:.6f}, {embedding[1]:.6f}, {embedding[2]:.6f}")
-    return embedding.tolist()
+    print(f"\n🔍 Generating Cohere embedding for query: '{query}'")
+    try:
+        embeddings = _get_cohere_embeddings([query], input_type="search_query")
+        embedding = embeddings[0]
+        print(f"   ✓ Generated {len(embedding)}-dim vector")
+        print(f"   Sample values: {embedding[0]:.6f}, {embedding[1]:.6f}, {embedding[2]:.6f}")
+        return embedding
+    except Exception as e:
+        print(f"❌ Failed to generate query embedding: {e}")
+        raise HTTPException(status_code=500, detail=f"Query embedding generation failed: {str(e)}")
 
 @app.post("/api/v1/ai/retrieve", response_model=RetrieveResponse)
 async def retrieve_context(request: RetrieveRequest):

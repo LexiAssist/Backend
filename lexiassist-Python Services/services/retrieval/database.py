@@ -31,13 +31,15 @@ class Base(DeclarativeBase):
 
 
 class DocumentChunk(Base):
-    __tablename__ = "document_chunks"
+    __tablename__ = "lexi_chunks"
+    __table_args__ = {"schema": "ai"}
 
     id = Column(String, primary_key=True)
-    material_id = Column(String, index=True)
-    user_id = Column(String, index=True)
+    doc_id = Column(String, index=True)
+    course = Column(String, index=True)
     chunk_text = Column(Text)
-    embedding = Column(Vector(384)) if PGVECTOR_AVAILABLE else Column(Text)
+    source = Column(String, default="uploaded_note")
+    embedding = Column(Vector(1024)) if PGVECTOR_AVAILABLE else Column(Text)
     chunk_index = Column(Integer)
 
 
@@ -66,6 +68,7 @@ if PGVECTOR_AVAILABLE:
             with engine.connect() as conn:
                 from sqlalchemy import text
                 conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
+                conn.execute(text("CREATE SCHEMA IF NOT EXISTS ai;"))
                 conn.commit()
             Base.metadata.create_all(bind=engine)
             print("✅ Database tables verified/created for Retrieval Service")
@@ -204,11 +207,11 @@ def search_pgvector(
             DocumentChunk,
             DocumentChunk.embedding.cosine_distance(query_vector).label("distance")
         ).where(
-            DocumentChunk.user_id == user_id
+            DocumentChunk.course == user_id
         )
 
         if material_id:
-            query = query.where(DocumentChunk.material_id == material_id)
+            query = query.where(DocumentChunk.doc_id == material_id)
 
         query = query.order_by("distance").limit(top_k)
 
@@ -217,7 +220,7 @@ def search_pgvector(
         return [
             {
                 "chunk_id": row.DocumentChunk.id,
-                "material_id": row.DocumentChunk.material_id,
+                "material_id": row.DocumentChunk.doc_id,
                 "chunk_text": row.DocumentChunk.chunk_text,
                 "similarity_score": round(1.0 - row.distance, 6),
                 "chunk_index": row.DocumentChunk.chunk_index
@@ -227,6 +230,11 @@ def search_pgvector(
 
     except Exception as e:
         print(f"   ⚠️  pgvector search error: {e}")
+        import traceback
+        traceback.print_exc()
+        is_postgres = DATABASE_URL.startswith("postgresql://") or DATABASE_URL.startswith("postgres://")
+        if is_postgres:
+            raise e
         print("   Falling back to JSON search...")
         return search_json_fallback(query_vector, user_id, material_id, top_k)
     finally:
