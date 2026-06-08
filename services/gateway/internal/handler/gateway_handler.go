@@ -120,6 +120,8 @@ func (h *GatewayHandler) RegisterRoutes(e *echo.Echo) {
 		protected.GET("/analytics/quiz-history", h.ProxyToAnalyticsService)
 		protected.GET("/analytics/goals", h.ProxyToAnalyticsService)
 		protected.POST("/analytics/goals", h.ProxyToAnalyticsService)
+		protected.PUT("/analytics/goals/:id", h.ProxyToAnalyticsService)
+		protected.DELETE("/analytics/goals/:id", h.ProxyToAnalyticsService)
 		protected.POST("/analytics/goals/:id/complete", h.ProxyToAnalyticsService)
 		protected.GET("/analytics/ai-usage", h.ProxyToAnalyticsService)
 		protected.POST("/analytics/ai-interactions", h.ProxyToAnalyticsService)

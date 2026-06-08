@@ -48,7 +48,9 @@ type AnalyticsService interface {
 	// Learning goal operations
 	CreateLearningGoal(ctx context.Context, userID uuid.UUID, req *CreateLearningGoalRequest) (*model.LearningGoal, error)
 	GetLearningGoals(ctx context.Context, userID uuid.UUID, includeCompleted bool) ([]model.LearningGoal, error)
+	UpdateLearningGoal(ctx context.Context, userID uuid.UUID, goalID uuid.UUID, req *UpdateLearningGoalRequest) (*model.LearningGoal, error)
 	CompleteLearningGoal(ctx context.Context, userID uuid.UUID, goalID uuid.UUID) error
+	DeleteLearningGoal(ctx context.Context, userID uuid.UUID, goalID uuid.UUID) error
 	
 	// AI interaction tracking
 	TrackAIInteraction(ctx context.Context, userID uuid.UUID, req *TrackAIInteractionRequest) error
@@ -92,11 +94,21 @@ type RecordStudySessionRequest struct {
 }
 
 type CreateLearningGoalRequest struct {
-	CourseID    *uuid.UUID `json:"course_id,omitempty"`
-	Title       string     `json:"title" validate:"required,max=255"`
-	Description string     `json:"description,omitempty"`
-	TargetDate  *time.Time `json:"target_date,omitempty"`
-	TargetScore *int       `json:"target_score,omitempty"`
+	CourseID    *uuid.UUID      `json:"course_id,omitempty"`
+	Title       string          `json:"title" validate:"required,max=255"`
+	Description string          `json:"description,omitempty"`
+	TargetDate  *time.Time      `json:"target_date,omitempty"`
+	TargetScore *int            `json:"target_score,omitempty"`
+	GoalType    model.GoalType  `json:"goal_type,omitempty"`
+}
+
+type UpdateLearningGoalRequest struct {
+	CourseID    *uuid.UUID      `json:"course_id,omitempty"`
+	Title       string          `json:"title,omitempty"`
+	Description string          `json:"description,omitempty"`
+	TargetDate  *time.Time      `json:"target_date,omitempty"`
+	TargetScore *int            `json:"target_score,omitempty"`
+	GoalType    model.GoalType  `json:"goal_type,omitempty"`
 }
 
 type TrackAIInteractionRequest struct {
@@ -297,6 +309,7 @@ func (s *analyticsService) CreateLearningGoal(ctx context.Context, userID uuid.U
 		Description: req.Description,
 		TargetDate:  req.TargetDate,
 		TargetScore: req.TargetScore,
+		GoalType:    req.GoalType,
 		IsCompleted: false,
 	}
 	
@@ -308,7 +321,123 @@ func (s *analyticsService) CreateLearningGoal(ctx context.Context, userID uuid.U
 }
 
 func (s *analyticsService) GetLearningGoals(ctx context.Context, userID uuid.UUID, includeCompleted bool) ([]model.LearningGoal, error) {
-	return s.goalRepo.GetByUserID(ctx, userID, includeCompleted)
+	goals, err := s.goalRepo.GetByUserID(ctx, userID, includeCompleted)
+	if err != nil {
+		return nil, err
+	}
+	
+	// Enrich each goal with computed current_value based on goal type
+	for i := range goals {
+		if goals[i].IsCompleted {
+			goals[i].CurrentValue = 0
+			if goals[i].TargetScore != nil {
+				goals[i].CurrentValue = *goals[i].TargetScore
+			}
+			continue
+		}
+		
+		current, err := s.computeGoalProgress(ctx, userID, &goals[i])
+		if err != nil {
+			// Log but don't fail — return goal with zero progress
+			continue
+		}
+		goals[i].CurrentValue = current
+		
+		// Auto-complete if target reached
+		if goals[i].TargetScore != nil && current >= *goals[i].TargetScore {
+			_ = s.goalRepo.MarkComplete(ctx, goals[i].ID)
+			goals[i].IsCompleted = true
+			goals[i].CurrentValue = *goals[i].TargetScore
+		}
+	}
+	
+	return goals, nil
+}
+
+func (s *analyticsService) computeGoalProgress(ctx context.Context, userID uuid.UUID, goal *model.LearningGoal) (int, error) {
+	switch goal.GoalType {
+	case model.GoalTypeStudyTime:
+		stats, err := s.sessionRepo.GetUserStats(ctx, userID)
+		if err != nil {
+			return 0, err
+		}
+		return stats.TotalStudyMinutes, nil
+		
+	case model.GoalTypeQuizScore:
+		attempts, err := s.attemptRepo.GetByUserID(ctx, userID, 1000, 0)
+		if err != nil {
+			return 0, err
+		}
+		best := 0
+		for _, attempt := range attempts {
+			if attempt.Status == model.AttemptStatusCompleted && attempt.Percentage != nil {
+				pct := int(*attempt.Percentage)
+				if pct > best {
+					best = pct
+				}
+			}
+		}
+		return best, nil
+		
+	case model.GoalTypeStreak:
+		streak, err := s.sessionRepo.GetStudyStreak(ctx, userID)
+		if err != nil {
+			return 0, err
+		}
+		return streak, nil
+		
+	case model.GoalTypeCourseCompletion:
+		attempts, err := s.attemptRepo.GetByUserID(ctx, userID, 1000, 0)
+		if err != nil {
+			return 0, err
+		}
+		count := 0
+		for _, attempt := range attempts {
+			if attempt.Status == model.AttemptStatusCompleted {
+				count++
+			}
+		}
+		return count, nil
+		
+	default:
+		return 0, nil
+	}
+}
+
+func (s *analyticsService) UpdateLearningGoal(ctx context.Context, userID uuid.UUID, goalID uuid.UUID, req *UpdateLearningGoalRequest) (*model.LearningGoal, error) {
+	goal, err := s.goalRepo.GetByID(ctx, goalID)
+	if err != nil {
+		return nil, errors.New("goal not found")
+	}
+	
+	if goal.UserID != userID {
+		return nil, ErrUnauthorized
+	}
+	
+	if req.Title != "" {
+		goal.Title = req.Title
+	}
+	if req.Description != "" {
+		goal.Description = req.Description
+	}
+	if req.CourseID != nil {
+		goal.CourseID = req.CourseID
+	}
+	if req.TargetDate != nil {
+		goal.TargetDate = req.TargetDate
+	}
+	if req.TargetScore != nil {
+		goal.TargetScore = req.TargetScore
+	}
+	if req.GoalType != "" {
+		goal.GoalType = req.GoalType
+	}
+	
+	if err := s.goalRepo.Update(ctx, goal); err != nil {
+		return nil, fmt.Errorf("failed to update learning goal: %w", err)
+	}
+	
+	return goal, nil
 }
 
 func (s *analyticsService) CompleteLearningGoal(ctx context.Context, userID uuid.UUID, goalID uuid.UUID) error {
@@ -323,6 +452,19 @@ func (s *analyticsService) CompleteLearningGoal(ctx context.Context, userID uuid
 	}
 	
 	return s.goalRepo.MarkComplete(ctx, goalID)
+}
+
+func (s *analyticsService) DeleteLearningGoal(ctx context.Context, userID uuid.UUID, goalID uuid.UUID) error {
+	goal, err := s.goalRepo.GetByID(ctx, goalID)
+	if err != nil {
+		return errors.New("goal not found")
+	}
+	
+	if goal.UserID != userID {
+		return ErrUnauthorized
+	}
+	
+	return s.goalRepo.Delete(ctx, goalID)
 }
 
 // ==================== AI Interaction Operations ====================

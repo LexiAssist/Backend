@@ -113,6 +113,8 @@ func main() {
 		// Learning goals
 		api.GET("/analytics/goals", analyticsHandler.GetLearningGoals)
 		api.POST("/analytics/goals", analyticsHandler.CreateLearningGoal)
+		api.PUT("/analytics/goals/:id", analyticsHandler.UpdateLearningGoal)
+		api.DELETE("/analytics/goals/:id", analyticsHandler.DeleteLearningGoal)
 		api.POST("/analytics/goals/:id/complete", analyticsHandler.CompleteLearningGoal)
 
 		// AI usage tracking

@@ -126,6 +126,16 @@ func (AIInteraction) TableName() string {
 	return "lexi_analytics.ai_interactions"
 }
 
+// GoalType represents the type of learning goal.
+type GoalType string
+
+const (
+	GoalTypeStudyTime        GoalType = "study_time"
+	GoalTypeQuizScore        GoalType = "quiz_score"
+	GoalTypeStreak           GoalType = "streak"
+	GoalTypeCourseCompletion GoalType = "course_completion"
+)
+
 // LearningGoal represents a user's learning objective.
 type LearningGoal struct {
 	ID             uuid.UUID  `gorm:"type:uuid;primary_key;default:uuid_generate_v4()" json:"id"`
@@ -135,6 +145,8 @@ type LearningGoal struct {
 	Description    string     `gorm:"type:text" json:"description,omitempty"`
 	TargetDate     *time.Time `gorm:"type:date" json:"target_date,omitempty"`
 	TargetScore    *int       `json:"target_score,omitempty"`
+	CurrentValue   int        `gorm:"default:0" json:"current_value"`
+	GoalType       GoalType   `gorm:"type:varchar(50);default:'study_time'" json:"goal_type"`
 	IsCompleted    bool       `gorm:"default:false" json:"is_completed"`
 	CompletedAt    *time.Time `json:"completed_at,omitempty"`
 	CreatedAt      time.Time  `json:"created_at"`

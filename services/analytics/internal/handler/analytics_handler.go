@@ -322,6 +322,64 @@ func (h *AnalyticsHandler) GetLearningGoals(c echo.Context) error {
 	return c.JSON(http.StatusOK, Response{Data: goals})
 }
 
+// UpdateLearningGoal handles PUT /api/v1/analytics/goals/:id
+func (h *AnalyticsHandler) UpdateLearningGoal(c echo.Context) error {
+	userID, err := getUserID(c)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusUnauthorized, "unauthorized")
+	}
+
+	goalID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid goal ID")
+	}
+
+	var req service.UpdateLearningGoalRequest
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+
+	goal, err := h.service.UpdateLearningGoal(c.Request().Context(), userID, goalID, &req)
+	if err != nil {
+		if err.Error() == "goal not found" {
+			return echo.NewHTTPError(http.StatusNotFound, "goal not found")
+		}
+		if err == service.ErrUnauthorized {
+			return echo.NewHTTPError(http.StatusForbidden, "access denied")
+		}
+		logger.Error("failed to update learning goal", zap.Error(err))
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to update goal")
+	}
+
+	return c.JSON(http.StatusOK, Response{Data: goal})
+}
+
+// DeleteLearningGoal handles DELETE /api/v1/analytics/goals/:id
+func (h *AnalyticsHandler) DeleteLearningGoal(c echo.Context) error {
+	userID, err := getUserID(c)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusUnauthorized, "unauthorized")
+	}
+
+	goalID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid goal ID")
+	}
+
+	if err := h.service.DeleteLearningGoal(c.Request().Context(), userID, goalID); err != nil {
+		if err.Error() == "goal not found" {
+			return echo.NewHTTPError(http.StatusNotFound, "goal not found")
+		}
+		if err == service.ErrUnauthorized {
+			return echo.NewHTTPError(http.StatusForbidden, "access denied")
+		}
+		logger.Error("failed to delete learning goal", zap.Error(err))
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to delete goal")
+	}
+
+	return c.JSON(http.StatusOK, Response{Message: "goal deleted"})
+}
+
 // CompleteLearningGoal handles POST /api/v1/analytics/goals/:id/complete
 func (h *AnalyticsHandler) CompleteLearningGoal(c echo.Context) error {
 	userID, err := getUserID(c)
