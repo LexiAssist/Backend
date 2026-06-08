@@ -329,7 +329,7 @@ services:
       - PORT=5005
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - ANALYTICS_WEBHOOK_URL=http://analytics-service:8083/api/v1/internal/ai-usage
-      - DEFAULT_MODEL=gemini-1.5-flash
+      - DEFAULT_MODEL=gemini-2.5-flash
       - INTERNAL_API_KEY=${INTERNAL_API_KEY:-dev-internal-key}
       - LOG_LEVEL=info
     ports:
