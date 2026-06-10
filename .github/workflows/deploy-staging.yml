@@ -26,6 +26,7 @@ jobs:
             echo "Build succeeded. Deploying..."
             docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d --force-recreate
             docker image prune -f
+            docker builder prune -f
 
       - name: Health check
         run: |
