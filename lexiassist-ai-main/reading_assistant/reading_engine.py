@@ -52,7 +52,9 @@ class ReaadingEngine:
         google_api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
         embeddings = GoogleGenerativeAIEmbeddings(
             model="gemini-embedding-001",
-            google_api_key=google_api_key
+            google_api_key=google_api_key,
+            task_type="RETRIEVAL_DOCUMENT",
+            output_dimensionality=768
         )
         
         # Chunk and store
