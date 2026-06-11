@@ -93,11 +93,42 @@ type RecordStudySessionRequest struct {
 	FlashcardsReviewed int       `json:"flashcards_reviewed"`
 }
 
+// FlexibleDate handles both "2026-06-19" and "2026-06-19T00:00:00Z" formats.
+type FlexibleDate struct {
+	time.Time
+}
+
+func (fd *FlexibleDate) UnmarshalJSON(b []byte) error {
+	s := strings.Trim(string(b), `"`)
+	if s == "" || s == "null" {
+		return nil
+	}
+	// Try RFC 3339 first
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		fd.Time = t
+		return nil
+	}
+	// Fall back to date-only
+	if t, err := time.Parse("2006-01-02", s); err == nil {
+		fd.Time = t
+		return nil
+	}
+	return fmt.Errorf("cannot parse date: %s", s)
+}
+
+func (fd *FlexibleDate) ToTimePtr() *time.Time {
+	if fd == nil || fd.Time.IsZero() {
+		return nil
+	}
+	t := fd.Time
+	return &t
+}
+
 type CreateLearningGoalRequest struct {
 	CourseID    *uuid.UUID      `json:"course_id,omitempty"`
 	Title       string          `json:"title" validate:"required,max=255"`
 	Description string          `json:"description,omitempty"`
-	TargetDate  *time.Time      `json:"target_date,omitempty"`
+	TargetDate  *FlexibleDate   `json:"target_date,omitempty"`
 	TargetScore *int            `json:"target_score,omitempty"`
 	GoalType    model.GoalType  `json:"goal_type,omitempty"`
 }
@@ -106,7 +137,7 @@ type UpdateLearningGoalRequest struct {
 	CourseID    *uuid.UUID      `json:"course_id,omitempty"`
 	Title       string          `json:"title,omitempty"`
 	Description string          `json:"description,omitempty"`
-	TargetDate  *time.Time      `json:"target_date,omitempty"`
+	TargetDate  *FlexibleDate   `json:"target_date,omitempty"`
 	TargetScore *int            `json:"target_score,omitempty"`
 	GoalType    model.GoalType  `json:"goal_type,omitempty"`
 }
@@ -307,7 +338,7 @@ func (s *analyticsService) CreateLearningGoal(ctx context.Context, userID uuid.U
 		CourseID:    req.CourseID,
 		Title:       req.Title,
 		Description: req.Description,
-		TargetDate:  req.TargetDate,
+		TargetDate:  req.TargetDate.ToTimePtr(),
 		TargetScore: req.TargetScore,
 		GoalType:    req.GoalType,
 		IsCompleted: false,
@@ -424,7 +455,7 @@ func (s *analyticsService) UpdateLearningGoal(ctx context.Context, userID uuid.U
 		goal.CourseID = req.CourseID
 	}
 	if req.TargetDate != nil {
-		goal.TargetDate = req.TargetDate
+		goal.TargetDate = req.TargetDate.ToTimePtr()
 	}
 	if req.TargetScore != nil {
 		goal.TargetScore = req.TargetScore
