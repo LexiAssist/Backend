@@ -206,7 +206,7 @@ class ReaadingEngine:
         cfg = state.get("tts_config", {"voice": "Zephyr", "speed": 1.0, "pitch": 0.0, "speaker_label": "Reader"})
         
         print(f"TTS Config: {cfg}")
-        print(f"generating audio with voice: {cfg['voice']}, speed: {cfg['speed']}, pitch: {cfg['pitch']}")
+        print(f"generating audio with voice: {cfg.get('voice', 'Zephyr')}, speed: {cfg.get('speed', 1.0)}, pitch: {cfg.get('pitch', 0.0)}")
 
         audio_result= self.tts_generator.generate_audio(
             text=summary,
