@@ -29,7 +29,7 @@ type ReverseProxy struct {
 func NewReverseProxy(cbThreshold int, cbTimeout time.Duration, internalAPIKey string) *ReverseProxy {
 	return &ReverseProxy{
 		client: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: 120 * time.Second,
 			Transport: &http.Transport{
 				MaxIdleConns:        100,
 				MaxIdleConnsPerHost: 10,
